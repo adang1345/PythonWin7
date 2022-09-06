@@ -1,0 +1,125 @@
+diff --git a/PC/pylauncher.rc b/PC/pylauncher.rc
+index 1186264..ff7e71e 100644
+--- a/PC/pylauncher.rc
++++ b/PC/pylauncher.rc
+@@ -25,9 +25,6 @@
+ 7 ICON DISCARDABLE "icons\setup.ico" 
+ #endif
+ 
+-1 USAGE "launcher-usage.txt"
+-
+-
+ /////////////////////////////////////////////////////////////////////////////
+ //
+ // Version
+diff --git a/PCbuild/pylauncher.vcxproj b/PCbuild/pylauncher.vcxproj
+index 35f2f7e..550e084 100644
+--- a/PCbuild/pylauncher.vcxproj
++++ b/PCbuild/pylauncher.vcxproj
+@@ -76,7 +76,7 @@
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+   <PropertyGroup Label="Configuration">
+     <ConfigurationType>Application</ConfigurationType>
+-    <CharacterSet>Unicode</CharacterSet>
++    <CharacterSet>MultiByte</CharacterSet>
+   </PropertyGroup>
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+   <ImportGroup Label="ExtensionSettings">
+@@ -95,12 +95,12 @@
+       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+     </ClCompile>
+     <Link>
+-      <AdditionalDependencies>shell32.lib;pathcch.lib;%(AdditionalDependencies)</AdditionalDependencies>
++      <AdditionalDependencies>version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+       <SubSystem>Console</SubSystem>
+     </Link>
+   </ItemDefinitionGroup>
+   <ItemGroup>
+-    <ClCompile Include="..\PC\launcher2.c" />
++    <ClCompile Include="..\PC\launcher.c" />
+   </ItemGroup>
+   <ItemGroup>
+     <None Include="..\PC\launcher.ico" />
+diff --git a/PCbuild/pywlauncher.vcxproj b/PCbuild/pywlauncher.vcxproj
+index e50b69a..44e3fc2 100644
+--- a/PCbuild/pywlauncher.vcxproj
++++ b/PCbuild/pywlauncher.vcxproj
+@@ -95,12 +95,12 @@
+       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+     </ClCompile>
+     <Link>
+-      <AdditionalDependencies>shell32.lib;pathcch.lib;%(AdditionalDependencies)</AdditionalDependencies>
++      <AdditionalDependencies>version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+       <SubSystem>Windows</SubSystem>
+     </Link>
+   </ItemDefinitionGroup>
+   <ItemGroup>
+-    <ClCompile Include="..\PC\launcher2.c" />
++    <ClCompile Include="..\PC\launcher.c" />
+   </ItemGroup>
+   <ItemGroup>
+     <None Include="..\PC\launcher.ico" />
+diff --git a/Tools/msi/launcher/launcher.wixproj b/Tools/msi/launcher/launcher.wixproj
+index de770bd..5150000 100644
+--- a/Tools/msi/launcher/launcher.wixproj
++++ b/Tools/msi/launcher/launcher.wixproj
+@@ -8,7 +8,6 @@
+         <DefineConstants>UpgradeCode=1B68A0EC-4DD3-5134-840E-73854B0863F1;SuppressUpgradeTable=1;$(DefineConstants)</DefineConstants>
+         <IgnoreCommonWxlTemplates>true</IgnoreCommonWxlTemplates>
+         <SuppressICEs>ICE80</SuppressICEs>
+-        <_Rebuild>Build</_Rebuild>
+     </PropertyGroup>
+     <Import Project="..\msi.props" />
+     <ItemGroup>
+@@ -20,26 +19,17 @@
+         <EmbeddedResource Include="*.wxl" />
+     </ItemGroup>
+ 
+-    <Target Name="_MarkAsRebuild" BeforeTargets="BeforeRebuild">
+-      <PropertyGroup>
+-        <_Rebuild>Rebuild</_Rebuild>
+-      </PropertyGroup>
++    <Target Name="_EnsurePyEx86" Condition="!Exists('$(BuildPath32)py.exe')" BeforeTargets="PrepareForBuild">
++        <MSBuild Projects="$(PySourcePath)PCbuild\pylauncher.vcxproj" Properties="Platform=Win32" />
+     </Target>
+-
+-    <Target Name="_EnsurePyEx86" Condition="!Exists('$(BuildPath32)py.exe') or '$(_Rebuild)' == 'Rebuild'" BeforeTargets="PrepareForBuild">
+-        <MSBuild Projects="$(PySourcePath)PCbuild\pylauncher.vcxproj" Properties="Platform=Win32" Targets="$(_Rebuild)" />
+-    </Target>
+-    <Target Name="_EnsurePywEx86" Condition="!Exists('$(BuildPath32)pyw.exe') or '$(_Rebuild)' == 'Rebuild'" BeforeTargets="PrepareForBuild">
+-        <MSBuild Projects="$(PySourcePath)PCbuild\pywlauncher.vcxproj" Properties="Platform=Win32" Targets="$(_Rebuild)" />
+-    </Target>
+-    <Target Name="_EnsurePyShellExt86" Condition="!Exists('$(BuildPath32)pyshellext.dll') or '$(_Rebuild)' == 'Rebuild'" BeforeTargets="PrepareForBuild">
+-        <MSBuild Projects="$(PySourcePath)PCbuild\pyshellext.vcxproj" Properties="Platform=Win32" Targets="$(_Rebuild)" />
++    <Target Name="_EnsurePywEx86" Condition="!Exists('$(BuildPath32)pyw.exe')" BeforeTargets="PrepareForBuild">
++        <MSBuild Projects="$(PySourcePath)PCbuild\pywlauncher.vcxproj" Properties="Platform=Win32" />
+     </Target>
+-    <Target Name="_EnsurePyShellExt64" Condition="!Exists('$(BuildPath64)pyshellext.dll') or '$(_Rebuild)' == 'Rebuild'" BeforeTargets="PrepareForBuild">
+-        <MSBuild Projects="$(PySourcePath)PCbuild\pyshellext.vcxproj" Properties="Platform=x64" Targets="$(_Rebuild)" />
++    <Target Name="_EnsurePyShellExt86" Condition="!Exists('$(BuildPath32)pyshellext.dll')" BeforeTargets="PrepareForBuild">
++        <MSBuild Projects="$(PySourcePath)PCbuild\pyshellext.vcxproj" Properties="Platform=Win32" />
+     </Target>
+-    <Target Name="_EnsurePyShellExtARM64" Condition="!Exists('$(BuildPathARM64)pyshellext.dll') or '$(_Rebuild)' == 'Rebuild'" BeforeTargets="PrepareForBuild">
+-        <MSBuild Projects="$(PySourcePath)PCbuild\pyshellext.vcxproj" Properties="Platform=ARM64" Targets="$(_Rebuild)" />
++    <Target Name="_EnsurePyShellExt64" Condition="!Exists('$(BuildPath64)pyshellext.dll')" BeforeTargets="PrepareForBuild">
++        <MSBuild Projects="$(PySourcePath)PCbuild\pyshellext.vcxproj" Properties="Platform=x64" />
+     </Target>
+     
+     <Import Project="..\msi.targets" />
+diff --git a/Tools/msi/launcher/launcher_files.wxs b/Tools/msi/launcher/launcher_files.wxs
+index d9a230e..fec638e 100644
+--- a/Tools/msi/launcher/launcher_files.wxs
++++ b/Tools/msi/launcher/launcher_files.wxs
+@@ -33,12 +33,6 @@
+                     <Class Id="{BEA218D2-6950-497B-9434-61683EC065FE}" Advertise="no" Context="InprocServer32" ThreadingModel="apartment" />
+                 </File>
+             </Component>
+-            <Component Id="pyshellext_arm64.dll" Directory="LauncherInstallDirectory" Guid="{C591963D-7FC6-4FCE-8642-5E01E6B8848F}" Win64="yes">
+-                <Condition>ARM64_SHELLEXT</Condition>
+-                <File Id="pyshellext_arm64.dll" Name="pyshellext.arm64.dll" Source="!(bindpath.BuildARM64)\pyshellext.dll">
+-                    <Class Id="{BEA218D2-6950-497B-9434-61683EC065FE}" Advertise="no" Context="InprocServer32" ThreadingModel="apartment" />
+-                </File>
+-            </Component>
+         </ComponentGroup>
+     </Fragment>
+ </Wix>

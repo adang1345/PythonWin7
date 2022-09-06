@@ -1,0 +1,72 @@
+diff --git a/PC/layout/main.py b/PC/layout/main.py
+index 3eef755..8a48d68 100644
+--- a/PC/layout/main.py
++++ b/PC/layout/main.py
+@@ -47,7 +47,7 @@ TCLTK_FILES_ONLY = FileNameSet("turtle.py")
+ 
+ VENV_DIRS_ONLY = FileNameSet("venv", "ensurepip")
+ 
+-EXCLUDE_FROM_PYDS = FileStemSet("python*", "pyshellext", "vcruntime*")
++EXCLUDE_FROM_PYDS = FileStemSet("python*", "pyshellext", "vcruntime*", "api-ms-*")
+ EXCLUDE_FROM_LIB = FileNameSet("*.pyc", "__pycache__", "*.pickle")
+ EXCLUDE_FROM_PACKAGED_LIB = FileNameSet("readme.txt")
+ EXCLUDE_FROM_COMPILE = FileNameSet("badsyntax_*", "bad_*")
+@@ -180,6 +180,12 @@ def get_layout(ns):
+     if not found_any:
+         log_error("Failed to locate vcruntime DLL in the build.")
+ 
++    for dest, src in rglob(ns.build, "api-ms-win-core-path-l1-1-0.dll"):
++        yield dest, src
++        break
++    else:
++        log_error("Failed to locate api-ms-win-core-path-l1-1-0.dll in the build.")
++
+     yield "LICENSE.txt", ns.build / "LICENSE.txt"
+ 
+     for dest, src in rglob(ns.build, ("*.pyd", "*.dll")):
+diff --git a/PC/layout/support/python.props b/PC/layout/support/python.props
+index 4cc7008..50281ce 100644
+--- a/PC/layout/support/python.props
++++ b/PC/layout/support/python.props
+@@ -31,6 +31,7 @@
+     <ItemGroup>
+       <_PythonRuntimeExe Include="$(PythonHome)\python*.dll" />
+       <_PythonRuntimeExe Include="$(PythonHome)\vcruntime140.dll" />
++      <_PythonRuntimeExe Include="$(PythonHome)\api-ms-win-core-path-l1-1-0.dll" />
+       <_PythonRuntimeExe Include="$(PythonHome)\python*.exe" Condition="$(IncludePythonExe) == 'true'" />
+       <_PythonRuntimeExe>
+         <Link>%(Filename)%(Extension)</Link>
+diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
+index 2625d02..e7d866b 100644
+--- a/PCbuild/pythoncore.vcxproj
++++ b/PCbuild/pythoncore.vcxproj
+@@ -553,6 +553,15 @@
+     <Warning Text="A copy of vcruntime140.dll is also required" Condition="!$(VCToolsRedistVersion.StartsWith(`14.`))" />
+     <Copy SourceFiles="%(VCRuntimeDLL.FullPath)" DestinationFolder="$(OutDir)" />
+   </Target>
++  <Target Name="_CopyWin7Patch_x86" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'Win32'">
++    <Copy SourceFiles="$(PATCHDIR)\x86\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++  </Target>
++  <Target Name="_CopyWin7Patch_x64" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'x64'">
++    <Copy SourceFiles="$(PATCHDIR)\x64\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++  </Target>
++  <Target Name="_CleanWin7Patch" AfterTargets="Clean">
++    <Delete Files="$(OutDir)api-ms-win-core-path-l1-1-0.dll" />
++  </Target>
+   <Target Name="_CleanVCRuntime" AfterTargets="Clean">
+     <Delete Files="@(VCRuntimeDLL->'$(OutDir)%(Filename)%(Extension)')" />
+   </Target>
+diff --git a/Tools/msi/exe/exe_files.wxs b/Tools/msi/exe/exe_files.wxs
+index 15bf6a0..8b920e5 100644
+--- a/Tools/msi/exe/exe_files.wxs
++++ b/Tools/msi/exe/exe_files.wxs
+@@ -32,6 +32,9 @@
+             <Component Id="vcruntime140.dll" Directory="InstallDirectory" Guid="*">
+                 <File Name="vcruntime140.dll" Source="vcruntime140.dll" KeyPath="yes" />
+             </Component>
++            <Component Id="Win7Patch" Directory="InstallDirectory" Guid="*">
++                <File Name="api-ms-win-core-path-l1-1-0.dll" Source="api-ms-win-core-path-l1-1-0.dll" KeyPath="yes" />
++            </Component>
+ <?ifdef Include_Vcruntime140_1_dll ?>
+             <Component Id="vcruntime140_1.dll" Directory="InstallDirectory" Guid="*">
+                 <File Name="vcruntime140_1.dll" Source="vcruntime140_1.dll" KeyPath="yes" />
