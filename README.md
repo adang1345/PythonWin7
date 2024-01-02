@@ -24,11 +24,17 @@ See [Notes.md](Notes.md) for more specific details about how I built these insta
 
 ## NuGet Packages
 
-To install a `.nupkg` package, ensure that you have the [NuGet Command-Line Interface](https://learn.microsoft.com/en-us/nuget/reference/nuget-exe-cli-reference?tabs=windows) installed. Go to the directory containing the `.nupkg` file in Command Prompt. Replace `target\installation\directory` in the following commands with the desired location to install the package.
+To install a `.nupkg` package, ensure that you have the [NuGet Command-Line Interface](https://learn.microsoft.com/en-us/nuget/reference/nuget-exe-cli-reference?tabs=windows) installed. Go to the directory containing the `.nupkg` file. Replace `target\installation\directory` in the following commands with the desired location to install the package.
 
-For 64-bit Python, run `nuget install python -Source %cd% -OuputDirectory target\installation\directory`
+### Command Prompt
+For 64-bit Python, run `nuget install python -Source %cd% -OutputDirectory target\installation\directory`
 
-For 32-bit Python, run `nuget install pythonx86 -Source %cd% -OuputDirectory target\installation\directory`
+For 32-bit Python, run `nuget install pythonx86 -Source %cd% -OutputDirectory target\installation\directory`
+
+### PowerShell
+For 64-bit Python, run `nuget install python -Source $(Get-Location) -OutputDirectory target\installation\directory`
+
+For 32-bit Python, run `nuget install pythonx86 -Source $(Get-Location) -OutputDirectory target\installation\directory`
 
 ## Git History
 
