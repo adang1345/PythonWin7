@@ -2,7 +2,7 @@
 
 Officially, Python 3.9 and above are not supported on Windows 7 SP1 and Windows Server 2008 R2. Here, you can obtain unofficial Windows installers that bring back support for these older Windows versions.
 
-*Note:* Windows update KB2533623 must be installed for Python to run. Ensure that your computer is up-to-date via Windows Update or install the update [here](https://support.microsoft.com/en-us/topic/microsoft-security-advisory-insecure-library-loading-could-allow-remote-code-execution-486ea436-2d47-27e5-6cb9-26ab7230c704).
+*Note:* Windows update KB2533623 must be installed for Python to run. Ensure that your computer is up-to-date via Windows Update. Alternatively, click [here](https://www.microsoft.com/en-us/download/details.aspx?id=47409) to manually install update KB3063858, which supersedes KB2533623.
 
 For each Python version, this repository includes the following.
 - 64-bit executable installer (e.g. python-3.9.0-amd64-full.exe)
