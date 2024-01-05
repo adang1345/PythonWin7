@@ -36,6 +36,42 @@ For 64-bit Python, run `nuget install python -Source $(Get-Location) -OutputDire
 
 For 32-bit Python, run `nuget install pythonx86 -Source $(Get-Location) -OutputDirectory target\installation\directory`
 
+### Example of using it in a GitHub workflow (to build Win7 compatible standalone programs)
+```yaml
+name: Build and publish
+
+env:
+  PY_PATH:
+
+on:
+  repository_dispatch:
+
+jobs:
+  windows-build:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/adang1345/PythonWin7/raw/master/3.12.1/python.3.12.1.nupkg" -OutFile "python.3.12.1.nupkg"
+          mkdir "C:\pywin7"
+          nuget install python -Source $(Get-Location) -OutputDirectory "C:\pywin7\"
+          echo "C:\pywin7\python.3.12.1\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Set up libraries
+        run: |
+          python -m pip install PyInstaller # or "https://github.com/pcroland/Pyinstaller-Builds/releases/download/PyInstaller/pyinstaller-6.3.0-py3-none-win_amd64.whl" for less false positive virus flagging
+          python -m pip install .
+
+      - name: Build
+        run: |
+          python -m PyInstaller -F __main__.py -n [program name here] --icon [logo_path]
+```
+
 ## Git History
 
 In an effort to keep the size of this repository low, the Git history will not be kept. All updates will be made via force-pushes. If you fork this repository and wish to update your fork, see https://stackoverflow.com/questions/9646167/clean-up-a-fork-and-restart-it-from-the-upstream.
