@@ -1,0 +1,259 @@
+diff --git a/PC/launcher2.c b/PC/launcher2.c
+index b372044..bf19479 100644
+--- a/PC/launcher2.c
++++ b/PC/launcher2.c
+@@ -1476,6 +1476,152 @@ addEnvironmentInfo(EnvironmentInfo **root, EnvironmentInfo* parent, EnvironmentI
+ \******************************************************************************/
+ 
+ 
++static void apply_restrictions(DWORD dwFlags, DWORD dwType, DWORD cbData, PLONG ret)
++{
++    /* Check if the type is restricted by the passed flags */
++    if (*ret == ERROR_SUCCESS || *ret == ERROR_MORE_DATA)
++    {
++        DWORD dwMask = 0;
++
++        switch (dwType)
++        {
++        case REG_NONE: dwMask = RRF_RT_REG_NONE; break;
++        case REG_SZ: dwMask = RRF_RT_REG_SZ; break;
++        case REG_EXPAND_SZ: dwMask = RRF_RT_REG_EXPAND_SZ; break;
++        case REG_MULTI_SZ: dwMask = RRF_RT_REG_MULTI_SZ; break;
++        case REG_BINARY: dwMask = RRF_RT_REG_BINARY; break;
++        case REG_DWORD: dwMask = RRF_RT_REG_DWORD; break;
++        case REG_QWORD: dwMask = RRF_RT_REG_QWORD; break;
++        }
++
++        if (dwFlags & dwMask)
++        {
++            /* Type is not restricted, check for size mismatch */
++            if (dwType == REG_BINARY)
++            {
++                DWORD cbExpect = 0;
++
++                if ((dwFlags & RRF_RT_ANY) == RRF_RT_DWORD)
++                    cbExpect = 4;
++                else if ((dwFlags & RRF_RT_ANY) == RRF_RT_QWORD)
++                    cbExpect = 8;
++
++                if (cbExpect && cbData != cbExpect)
++                    *ret = ERROR_DATATYPE_MISMATCH;
++            }
++        } else *ret = ERROR_UNSUPPORTED_TYPE;
++    }
++}
++
++static inline BOOL is_string(DWORD type)
++{
++    return (type == REG_SZ) || (type == REG_EXPAND_SZ) || (type == REG_MULTI_SZ);
++}
++
++static LSTATUS Py_RegGetValueW(HKEY hKey, LPCWSTR pszSubKey, LPCWSTR pszValue,
++    DWORD dwFlags, LPDWORD pdwType, PVOID pvData,
++    LPDWORD pcbData)
++{
++    DWORD dwType, cbData = (pvData && pcbData) ? *pcbData : 0;
++    PVOID pvBuf = NULL;
++    LONG ret;
++
++    if (pvData && !pcbData)
++        return ERROR_INVALID_PARAMETER;
++
++    if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && !(dwFlags & (RRF_NOEXPAND | RRF_RT_REG_SZ)) &&
++        ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY))
++        return ERROR_INVALID_PARAMETER;
++
++    if ((dwFlags & RRF_WOW64_MASK) == RRF_WOW64_MASK)
++        return ERROR_INVALID_PARAMETER;
++
++    if (pszSubKey && pszSubKey[0])
++    {
++        REGSAM samDesired = KEY_QUERY_VALUE;
++
++        if (dwFlags & RRF_WOW64_MASK)
++            samDesired |= (dwFlags & RRF_SUBKEY_WOW6432KEY) ? KEY_WOW64_32KEY : KEY_WOW64_64KEY;
++
++        ret = RegOpenKeyExW(hKey, pszSubKey, 0, samDesired, &hKey);
++        if (ret != ERROR_SUCCESS) return ret;
++    }
++
++    ret = RegQueryValueExW(hKey, pszValue, NULL, &dwType, pvData, &cbData);
++
++    /* If the value is a string, we need to read in the whole value to be able
++     * to know exactly how many bytes are needed after expanding the string and
++     * ensuring that it is null-terminated. */
++    if (is_string(dwType) &&
++        (ret == ERROR_MORE_DATA ||
++            (ret == ERROR_SUCCESS && dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND)) ||
++            (ret == ERROR_SUCCESS && (cbData < sizeof(WCHAR) || (pvData && *((WCHAR *)pvData + cbData / sizeof(WCHAR) - 1))))))
++    {
++        do {
++            HeapFree(GetProcessHeap(), 0, pvBuf);
++
++            pvBuf = HeapAlloc(GetProcessHeap(), 0, cbData + sizeof(WCHAR));
++            if (!pvBuf)
++            {
++                ret = ERROR_NOT_ENOUGH_MEMORY;
++                break;
++            }
++
++            if (ret == ERROR_MORE_DATA || !pvData)
++                ret = RegQueryValueExW(hKey, pszValue, NULL,
++                    &dwType, pvBuf, &cbData);
++            else
++            {
++                /* Even if cbData was large enough we have to copy the
++                 * string since ExpandEnvironmentStrings can't handle
++                 * overlapping buffers. */
++                CopyMemory(pvBuf, pvData, cbData);
++            }
++        } while (ret == ERROR_MORE_DATA);
++
++        if (ret == ERROR_SUCCESS)
++        {
++            /* Ensure null termination */
++            if (cbData < sizeof(WCHAR) || *((WCHAR *)pvBuf + cbData / sizeof(WCHAR) - 1))
++            {
++                *((WCHAR *)pvBuf + cbData / sizeof(WCHAR)) = 0;
++                cbData += sizeof(WCHAR);
++            }
++
++            /* Recheck dwType in case it changed since the first call */
++            if (dwType == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND))
++            {
++                cbData = ExpandEnvironmentStringsW(pvBuf, pvData,
++                    pcbData ? *pcbData : 0) * sizeof(WCHAR);
++                dwType = REG_SZ;
++                if (pvData && cbData > *pcbData)
++                    ret = ERROR_MORE_DATA;
++            } else if (pvData)
++            {
++                if (cbData > *pcbData)
++                    ret = ERROR_MORE_DATA;
++                else
++                    CopyMemory(pvData, pvBuf, cbData);
++            }
++        }
++
++        HeapFree(GetProcessHeap(), 0, pvBuf);
++    }
++
++    if (pszSubKey && pszSubKey[0])
++        RegCloseKey(hKey);
++
++    apply_restrictions(dwFlags, dwType, cbData, &ret);
++
++    if (pvData && ret != ERROR_SUCCESS && (dwFlags & RRF_ZEROONFAILURE))
++        ZeroMemory(pvData, *pcbData);
++
++    if (pdwType) *pdwType = dwType;
++    if (pcbData) *pcbData = cbData;
++
++    return ret;
++}
++
+ int
+ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, const wchar_t *value)
+ {
+@@ -1483,7 +1629,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
+     DWORD cbData = 0;
+     DWORD flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+ 
+-    if (ERROR_SUCCESS != RegGetValueW(root, subkey, value, flags, NULL, NULL, &cbData)) {
++    if (ERROR_SUCCESS != Py_RegGetValueW(root, subkey, value, flags, NULL, NULL, &cbData)) {
+         return 0;
+     }
+ 
+@@ -1492,7 +1638,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
+         return RC_NO_MEMORY;
+     }
+ 
+-    if (ERROR_SUCCESS == RegGetValueW(root, subkey, value, flags, NULL, buffer, &cbData)) {
++    if (ERROR_SUCCESS == Py_RegGetValueW(root, subkey, value, flags, NULL, buffer, &cbData)) {
+         *dest = buffer;
+     } else {
+         free((void *)buffer);
+diff --git a/Tools/msi/bundle/packagegroups/postinstall.wxs b/Tools/msi/bundle/packagegroups/postinstall.wxs
+index 24c72e6..13c2790 100644
+--- a/Tools/msi/bundle/packagegroups/postinstall.wxs
++++ b/Tools/msi/bundle/packagegroups/postinstall.wxs
+@@ -52,7 +52,9 @@
+                         Permanent="yes"
+                         PerMachine="yes"
+                         Vital="no"
+-                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileall_AllUsers" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+             <ExePackage Id="compileallO_AllUsers"
+                         SourceFile="py.exe"
+                         Compressed="yes"
+@@ -62,7 +64,9 @@
+                         Permanent="yes"
+                         PerMachine="yes"
+                         Vital="no"
+-                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileallO_AllUsers" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+             <ExePackage Id="compileallOO_AllUsers"
+                         SourceFile="py.exe"
+                         Compressed="yes"
+@@ -72,7 +76,9 @@
+                         Permanent="yes"
+                         PerMachine="yes"
+                         Vital="no"
+-                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileallOO_AllUsers" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+ 
+             <ExePackage Id="compileall_JustForMe"
+                         SourceFile="py.exe"
+@@ -83,7 +89,9 @@
+                         Permanent="yes"
+                         PerMachine="no"
+                         Vital="no"
+-                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileall_JustForMe" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+             <ExePackage Id="compileallO_JustForMe"
+                         SourceFile="py.exe"
+                         Compressed="yes"
+@@ -93,7 +101,9 @@
+                         Permanent="yes"
+                         PerMachine="no"
+                         Vital="no"
+-                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileallO_JustForMe" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+             <ExePackage Id="compileallOO_JustForMe"
+                         SourceFile="py.exe"
+                         Compressed="yes"
+@@ -103,7 +113,9 @@
+                         Permanent="yes"
+                         PerMachine="no"
+                         Vital="no"
+-                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly" />
++                        InstallCondition="not InstallAllUsers and CompileAll and not LauncherOnly">
++                <Payload Id="payload_compileallOO_JustForMe" SourceFile="api-ms-win-core-path-l1-1-0.dll" Compressed="yes" />
++            </ExePackage>
+         </PackageGroup>
+     </Fragment>
+ </Wix>
+diff --git a/Tools/msi/launcher/launcher_files.wxs b/Tools/msi/launcher/launcher_files.wxs
+index d9a230e..927a6c7 100644
+--- a/Tools/msi/launcher/launcher_files.wxs
++++ b/Tools/msi/launcher/launcher_files.wxs
+@@ -9,6 +9,9 @@
+             <Component Id="pyw.exe" Directory="LauncherInstallDirectory" Guid="{8E52B8CD-48BB-4D74-84CD-6238BCD11F20}">
+                 <File Id="pyw.exe" Name="pyw.exe" Source="pyw.exe" KeyPath="yes" />
+             </Component>
++            <Component Id="api_ms_win_core_path_l1_1_0.dll" Directory="LauncherInstallDirectory" Guid="{7BADFF1C-D76A-4F9B-A955-09E6EC1614B7}">
++                <File Id="api_ms_win_core_path_l1_1_0.dll" Name="api-ms-win-core-path-l1-1-0.dll" Source="api-ms-win-core-path-l1-1-0.dll" KeyPath="yes" />
++            </Component>
+ 
+             <Component Id="launcher_path_cu" Directory="LauncherInstallDirectory" Guid="{95AEB930-367C-475C-A17E-A89BFCD4C670}">
+                 <Condition>NOT ALLUSERS=1</Condition>
