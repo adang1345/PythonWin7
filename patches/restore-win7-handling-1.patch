@@ -1,0 +1,185 @@
+diff --git a/Modules/_winapi.c b/Modules/_winapi.c
+index 7727540..8532356 100644
+--- a/Modules/_winapi.c
++++ b/Modules/_winapi.c
+@@ -2104,6 +2104,8 @@ _winapi_NeedCurrentDirectoryForExePath_impl(PyObject *module,
+     return result;
+ }
+ 
++typedef HRESULT (WINAPI *CopyFile2Func)(PCWSTR pwszExistingFileName, PCWSTR pwszNewFileName, COPYFILE2_EXTENDED_PARAMETERS *pExtendedParameters);
++CopyFile2Func Py_CopyFile2;
+ 
+ /*[clinic input]
+ _winapi.CopyFile2
+@@ -2146,7 +2148,7 @@ _winapi_CopyFile2_impl(PyObject *module, LPCWSTR existing_file_name,
+     }
+     */
+     Py_BEGIN_ALLOW_THREADS;
+-    hr = CopyFile2(existing_file_name, new_file_name, &params);
++    hr = Py_CopyFile2(existing_file_name, new_file_name, &params);
+     Py_END_ALLOW_THREADS;
+     /* For future implementation.
+     if (progress_routine != Py_None) {
+@@ -2420,5 +2422,21 @@ static struct PyModuleDef winapi_module = {
+ PyMODINIT_FUNC
+ PyInit__winapi(void)
+ {
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (!hKernel32) return NULL;
++    if (!(Py_CopyFile2 = (CopyFile2Func)GetProcAddress(hKernel32, "CopyFile2"))) {
++        for (PyMethodDef *method = winapi_functions; method->ml_name; method++) {
++            if (!strcmp(method->ml_name, "CopyFile2")) {
++                PyMethodDef *last = winapi_functions + Py_ARRAY_LENGTH(winapi_functions) - 2;
++                if (method == last) {
++                    memset(method, 0, sizeof(*method));
++                } else {
++                    *method = *last;
++                    memset(last, 0, sizeof(*last));
++                }
++                break;
++            }
++        }
++    }
+     return PyModuleDef_Init(&winapi_module);
+ }
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+index b9ca286..5711047 100644
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -8759,33 +8759,94 @@ os_setpgrp_impl(PyObject *module)
+ #ifdef HAVE_GETPPID
+ 
+ #ifdef MS_WINDOWS
++#include <tlhelp32.h>
+ #include <processsnapshot.h>
+ 
++static INIT_ONCE g_InitOnce = INIT_ONCE_STATIC_INIT;
++typedef DWORD(WINAPI *PssCaptureSnapshotFunc)(HANDLE ProcessHandle, PSS_CAPTURE_FLAGS CaptureFlags, DWORD ThreadContextFlags, HPSS* SnapshotHandle);
++typedef DWORD(WINAPI *PssQuerySnapshotFunc)(HPSS SnapshotHandle, PSS_QUERY_INFORMATION_CLASS InformationClass, void* Buffer, DWORD BufferLength);
++typedef DWORD(WINAPI *PssFreeSnapshotFunc)(HANDLE ProcessHandle, HPSS SnapshotHandle);
++static PssCaptureSnapshotFunc Py_PssCaptureSnapshot;
++static PssQuerySnapshotFunc Py_PssQuerySnapshot;
++static PssFreeSnapshotFunc Py_PssFreeSnapshot;
++
++static BOOL CALLBACK Py_ProcessSnapshot_Init(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *lpContext)
++{
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (hKernel32) {
++        Py_PssCaptureSnapshot = (PssCaptureSnapshotFunc)GetProcAddress(hKernel32, "PssCaptureSnapshot");
++        Py_PssQuerySnapshot = (PssQuerySnapshotFunc)GetProcAddress(hKernel32, "PssQuerySnapshot");
++        Py_PssFreeSnapshot = (PssFreeSnapshotFunc)GetProcAddress(hKernel32, "PssFreeSnapshot");
++        if (!Py_PssCaptureSnapshot || !Py_PssQuerySnapshot || !Py_PssFreeSnapshot) {
++            Py_PssCaptureSnapshot = NULL;
++            Py_PssQuerySnapshot = NULL;
++            Py_PssFreeSnapshot = NULL;
++        }
++    }
++    return TRUE;
++}
++
+ static PyObject*
+ win32_getppid(void)
+ {
+-    DWORD error;
+-    PyObject* result = NULL;
+-    HANDLE process = GetCurrentProcess();
++    InitOnceExecuteOnce(&g_InitOnce, Py_ProcessSnapshot_Init, NULL, NULL);
++    if (Py_PssCaptureSnapshot) {
++        DWORD error;
++        PyObject* result = NULL;
++        HANDLE process = GetCurrentProcess();
+ 
+-    HPSS snapshot = NULL;
+-    error = PssCaptureSnapshot(process, PSS_CAPTURE_NONE, 0, &snapshot);
+-    if (error != ERROR_SUCCESS) {
+-        return PyErr_SetFromWindowsErr(error);
+-    }
++        HPSS snapshot = NULL;
++        error = Py_PssCaptureSnapshot(process, PSS_CAPTURE_NONE, 0, &snapshot);
++        if (error != ERROR_SUCCESS) {
++            return PyErr_SetFromWindowsErr(error);
++        }
+ 
+-    PSS_PROCESS_INFORMATION info;
+-    error = PssQuerySnapshot(snapshot, PSS_QUERY_PROCESS_INFORMATION, &info,
+-                             sizeof(info));
+-    if (error == ERROR_SUCCESS) {
+-        result = PyLong_FromUnsignedLong(info.ParentProcessId);
+-    }
+-    else {
+-        result = PyErr_SetFromWindowsErr(error);
+-    }
++        PSS_PROCESS_INFORMATION info;
++        error = Py_PssQuerySnapshot(snapshot, PSS_QUERY_PROCESS_INFORMATION, &info,
++            sizeof(info));
++        if (error == ERROR_SUCCESS) {
++            result = PyLong_FromUnsignedLong(info.ParentProcessId);
++        } else {
++            result = PyErr_SetFromWindowsErr(error);
++        }
+ 
+-    PssFreeSnapshot(process, snapshot);
+-    return result;
++        Py_PssFreeSnapshot(process, snapshot);
++        return result;
++    } else {
++        HANDLE snapshot;
++        pid_t mypid;
++        PyObject* result = NULL;
++        BOOL have_record;
++        PROCESSENTRY32 pe;
++
++        mypid = getpid(); /* This function never fails */
++
++        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
++        if (snapshot == INVALID_HANDLE_VALUE)
++            return PyErr_SetFromWindowsErr(GetLastError());
++
++        pe.dwSize = sizeof(pe);
++        have_record = Process32First(snapshot, &pe);
++        while (have_record) {
++            if (mypid == (pid_t)pe.th32ProcessID) {
++                /* We could cache the ulong value in a static variable. */
++                result = PyLong_FromPid((pid_t)pe.th32ParentProcessID);
++                break;
++            }
++
++            have_record = Process32Next(snapshot, &pe);
++        }
++
++        /* If our loop exits and our pid was not found (result will be NULL)
++         * then GetLastError will return ERROR_NO_MORE_FILES. This is an
++         * error anyway, so let's raise it. */
++        if (!result)
++            result = PyErr_SetFromWindowsErr(GetLastError());
++
++        CloseHandle(snapshot);
++
++        return result;
++    }
+ }
+ #endif /*MS_WINDOWS*/
+ 
+diff --git a/Python/fileutils.c b/Python/fileutils.c
+index c752175..36397b3 100644
+--- a/Python/fileutils.c
++++ b/Python/fileutils.c
+@@ -1489,11 +1489,17 @@ set_inheritable(int fd, int inheritable, int raise, int *atomic_flag_works)
+     else
+         flags = 0;
+ 
+-    if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
++    /* This check can be removed once support for Windows 7 ends. */
++#define CONSOLE_PSEUDOHANDLE(handle) (((ULONG_PTR)(handle) & 0x3) == 0x3 && \
++        GetFileType(handle) == FILE_TYPE_CHAR)
++
++    if (!CONSOLE_PSEUDOHANDLE(handle) &&
++        !SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
+         if (raise)
+             PyErr_SetFromWindowsErr(0);
+         return -1;
+     }
++#undef CONSOLE_PSEUDOHANDLE
+     return 0;
+ 
+ #else
