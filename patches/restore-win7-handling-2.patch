@@ -1,0 +1,217 @@
+diff --git a/Lib/_pyrepl/main.py b/Lib/_pyrepl/main.py
+index a6f824d..b3fc215 100644
+--- a/Lib/_pyrepl/main.py
++++ b/Lib/_pyrepl/main.py
+@@ -15,7 +15,7 @@ try:
+         raise RuntimeError(err)
+ except Exception as e:
+     CAN_USE_PYREPL = False
+-    FAIL_REASON = f"warning: can't use pyrepl: {e}"
++    FAIL_REASON = ""
+ else:
+     CAN_USE_PYREPL = True
+     FAIL_REASON = ""
+diff --git a/Modules/_winapi.c b/Modules/_winapi.c
+index 8794d56..e21729f 100644
+--- a/Modules/_winapi.c
++++ b/Modules/_winapi.c
+@@ -2889,6 +2889,8 @@ _winapi_NeedCurrentDirectoryForExePath_impl(PyObject *module,
+     return result;
+ }
+ 
++typedef HRESULT (WINAPI *CopyFile2Func)(PCWSTR pwszExistingFileName, PCWSTR pwszNewFileName, COPYFILE2_EXTENDED_PARAMETERS *pExtendedParameters);
++CopyFile2Func Py_CopyFile2;
+ 
+ /*[clinic input]
+ _winapi.CopyFile2
+@@ -2931,7 +2933,7 @@ _winapi_CopyFile2_impl(PyObject *module, LPCWSTR existing_file_name,
+     }
+     */
+     Py_BEGIN_ALLOW_THREADS;
+-    hr = CopyFile2(existing_file_name, new_file_name, &params);
++    hr = Py_CopyFile2(existing_file_name, new_file_name, &params);
+     Py_END_ALLOW_THREADS;
+     /* For future implementation.
+     if (progress_routine != Py_None) {
+@@ -3228,5 +3230,21 @@ static struct PyModuleDef winapi_module = {
+ PyMODINIT_FUNC
+ PyInit__winapi(void)
+ {
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (!hKernel32) return NULL;
++    if (!(Py_CopyFile2 = (CopyFile2Func)GetProcAddress(hKernel32, "CopyFile2"))) {
++        for (PyMethodDef *method = winapi_functions; method->ml_name; method++) {
++            if (!strcmp(method->ml_name, "CopyFile2")) {
++                PyMethodDef *last = winapi_functions + Py_ARRAY_LENGTH(winapi_functions) - 2;
++                if (method == last) {
++                    memset(method, 0, sizeof(*method));
++                } else {
++                    *method = *last;
++                    memset(last, 0, sizeof(*last));
++                }
++                break;
++            }
++        }
++    }
+     return PyModuleDef_Init(&winapi_module);
+ }
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+index c0a7c14..59d92f5 100644
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -9272,7 +9272,6 @@ os_setpgrp_impl(PyObject *module)
+ 
+ #ifdef MS_WINDOWS
+ #include <winternl.h>
+-#include <ProcessSnapshot.h>
+ 
+ // The structure definition in winternl.h may be incomplete.
+ // This structure is the full version from the MSDN documentation.
+@@ -9350,36 +9349,12 @@ win32_getppid_fast(void)
+ static PyObject*
+ win32_getppid(void)
+ {
+-    DWORD error;
+-    PyObject* result = NULL;
+-    HANDLE process = GetCurrentProcess();
+-    HPSS snapshot = NULL;
+-    ULONG pid;
+-
+-    pid = win32_getppid_fast();
++    ULONG pid = win32_getppid_fast();
+     if (pid != 0) {
+         return PyLong_FromUnsignedLong(pid);
+     }
+-
+-    // If failure occurs in win32_getppid_fast(), fall back to using the PSS API.
+-
+-    error = PssCaptureSnapshot(process, PSS_CAPTURE_NONE, 0, &snapshot);
+-    if (error != ERROR_SUCCESS) {
+-        return PyErr_SetFromWindowsErr(error);
+-    }
+-
+-    PSS_PROCESS_INFORMATION info;
+-    error = PssQuerySnapshot(snapshot, PSS_QUERY_PROCESS_INFORMATION, &info,
+-                             sizeof(info));
+-    if (error == ERROR_SUCCESS) {
+-        result = PyLong_FromUnsignedLong(info.ParentProcessId);
+-    }
+-    else {
+-        result = PyErr_SetFromWindowsErr(error);
+-    }
+-
+-    PssFreeSnapshot(process, snapshot);
+-    return result;
++    PyErr_SetString(PyExc_OSError, "unable to obtain parent PID");
++    return NULL;
+ }
+ #endif /*MS_WINDOWS*/
+ 
+diff --git a/Python/fileutils.c b/Python/fileutils.c
+index c9ae1b3..9ea55a5 100644
+--- a/Python/fileutils.c
++++ b/Python/fileutils.c
+@@ -1492,11 +1492,17 @@ set_inheritable(int fd, int inheritable, int raise, int *atomic_flag_works)
+     else
+         flags = 0;
+ 
+-    if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
++    /* This check can be removed once support for Windows 7 ends. */
++#define CONSOLE_PSEUDOHANDLE(handle) (((ULONG_PTR)(handle) & 0x3) == 0x3 && \
++        GetFileType(handle) == FILE_TYPE_CHAR)
++
++    if (!CONSOLE_PSEUDOHANDLE(handle) &&
++        !SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
+         if (raise)
+             PyErr_SetFromWindowsErr(0);
+         return -1;
+     }
++#undef CONSOLE_PSEUDOHANDLE
+     return 0;
+ 
+ #else
+diff --git a/Python/pytime.c b/Python/pytime.c
+index 560aea3..4931acf 100644
+--- a/Python/pytime.c
++++ b/Python/pytime.c
+@@ -55,14 +55,6 @@
+ #endif
+ 
+ 
+-#ifdef MS_WINDOWS
+-static _PyTimeFraction py_qpc_base = {0, 0};
+-
+-// Forward declaration
+-static int py_win_perf_counter_frequency(_PyTimeFraction *base, int raise_exc);
+-#endif
+-
+-
+ static PyTime_t
+ _PyTime_GCD(PyTime_t x, PyTime_t y)
+ {
+@@ -907,7 +899,7 @@ py_get_system_clock(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+     FILETIME system_time;
+     ULARGE_INTEGER large;
+ 
+-    GetSystemTimePreciseAsFileTime(&system_time);
++    GetSystemTimeAsFileTime(&system_time);
+     large.u.LowPart = system_time.dwLowDateTime;
+     large.u.HighPart = system_time.dwHighDateTime;
+     /* 11,644,473,600,000,000,000: number of nanoseconds between
+@@ -916,17 +908,18 @@ py_get_system_clock(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+     PyTime_t ns = large.QuadPart * 100 - 11644473600000000000;
+     *tp = ns;
+     if (info) {
+-        // GetSystemTimePreciseAsFileTime() is implemented using
+-        // QueryPerformanceCounter() internally.
+-        if (py_qpc_base.denom == 0) {
+-            if (py_win_perf_counter_frequency(&py_qpc_base, raise_exc) < 0) {
+-                return -1;
+-            }
+-        }
++        DWORD timeAdjustment, timeIncrement;
++        BOOL isTimeAdjustmentDisabled, ok;
+ 
+-        info->implementation = "GetSystemTimePreciseAsFileTime()";
++        info->implementation = "GetSystemTimeAsFileTime()";
+         info->monotonic = 0;
+-        info->resolution = _PyTimeFraction_Resolution(&py_qpc_base);
++        ok = GetSystemTimeAdjustment(&timeAdjustment, &timeIncrement,
++                                     &isTimeAdjustmentDisabled);
++        if (!ok) {
++            PyErr_SetFromWindowsErr(0);
++            return -1;
++        }
++        info->resolution = timeIncrement * 1e-7;
+         info->adjustable = 1;
+     }
+ 
+@@ -1073,15 +1066,16 @@ py_get_win_perf_counter(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+ {
+     assert(info == NULL || raise_exc);
+ 
+-    if (py_qpc_base.denom == 0) {
+-        if (py_win_perf_counter_frequency(&py_qpc_base, raise_exc) < 0) {
++    static _PyTimeFraction base = {0, 0};
++    if (base.denom == 0) {
++        if (py_win_perf_counter_frequency(&base, raise_exc) < 0) {
+             return -1;
+         }
+     }
+ 
+     if (info) {
+         info->implementation = "QueryPerformanceCounter()";
+-        info->resolution = _PyTimeFraction_Resolution(&py_qpc_base);
++        info->resolution = _PyTimeFraction_Resolution(&base);
+         info->monotonic = 1;
+         info->adjustable = 0;
+     }
+@@ -1097,7 +1091,7 @@ py_get_win_perf_counter(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+                   "LONGLONG is larger than PyTime_t");
+     ticks = (PyTime_t)ticksll;
+ 
+-    *tp = _PyTimeFraction_Mul(ticks, &py_qpc_base);
++    *tp = _PyTimeFraction_Mul(ticks, &base);
+     return 0;
+ }
+ #endif  // MS_WINDOWS

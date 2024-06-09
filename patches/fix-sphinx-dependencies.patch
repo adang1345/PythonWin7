@@ -1,0 +1,16 @@
+diff --git a/Doc/requirements.txt b/Doc/requirements.txt
+index 7f82dc3..0739121 100644
+--- a/Doc/requirements.txt
++++ b/Doc/requirements.txt
+@@ -4,6 +4,11 @@
+ # won't suddenly cause build failures. Updating the version is fine as long
+ # as no warnings are raised by doing so.
+ sphinx==4.5.0
++sphinxcontrib-applehelp==1.0.4
++sphinxcontrib-devhelp==1.0.2
++sphinxcontrib-htmlhelp==2.0.1
++sphinxcontrib-qthelp==1.0.3
++sphinxcontrib-serializinghtml==1.1.5
+ 
+ blurb
+ 
