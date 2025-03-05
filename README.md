@@ -17,7 +17,7 @@ For the more technical among you, these installers were built from the source di
 - Include the file `api-ms-win-core-path-l1-1-0.dll` in the distribution. This file was obtained from https://github.com/nalexandru/api-ms-win-core-path-HACK and is necessary for Python to run on older Windows versions.
 - Create full installers that include debug symbols, debug binaries, and the Universal CRT without needing to download them. For Python 3.13 or higher, include the experimental free-threaded build as well.
 - Allow the installer to proceed on Windows 7 SP1 and Windows Server 2008 R2 SP1.
-- For Python 3.11 or higher, revert or modify changes to the Python source code that are not compatible with Windows 7.
+- For Python 3.11 or higher, revert or modify changes to the Python source code that are not compatible with Windows 7 SP1 or Windows Server 2008 R2 SP1.
 - Fix a few bugs in the build scripts.
 
 See [Notes.md](Notes.md) for more specific details about how I built these installers and how you may build them yourself.
