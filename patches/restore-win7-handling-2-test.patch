@@ -1,0 +1,433 @@
+diff --git a/Lib/_pyrepl/main.py b/Lib/_pyrepl/main.py
+index a6f824d..b3fc215 100644
+--- a/Lib/_pyrepl/main.py
++++ b/Lib/_pyrepl/main.py
+@@ -15,7 +15,7 @@ try:
+         raise RuntimeError(err)
+ except Exception as e:
+     CAN_USE_PYREPL = False
+-    FAIL_REASON = f"warning: can't use pyrepl: {e}"
++    FAIL_REASON = ""
+ else:
+     CAN_USE_PYREPL = True
+     FAIL_REASON = ""
+diff --git a/Modules/_winapi.c b/Modules/_winapi.c
+index 71bddd2..a1f515a 100644
+--- a/Modules/_winapi.c
++++ b/Modules/_winapi.c
+@@ -48,6 +48,7 @@
+ #include <winioctl.h>
+ #include <crtdbg.h>
+ #include "winreparse.h"
++#include <winternl.h>
+ 
+ #if defined(MS_WIN32) && !defined(MS_WIN64)
+ #define HANDLE_TO_PYNUM(handle) \
+@@ -2889,6 +2890,174 @@ _winapi_NeedCurrentDirectoryForExePath_impl(PyObject *module,
+     return result;
+ }
+ 
++typedef struct _FILE_BASIC_INFORMATION {
++    LARGE_INTEGER CreationTime;
++    LARGE_INTEGER LastAccessTime;
++    LARGE_INTEGER LastWriteTime;
++    LARGE_INTEGER ChangeTime;
++    ULONG         FileAttributes;
++} FILE_BASIC_INFORMATION, *PFILE_BASIC_INFORMATION;
++
++const static FILE_INFORMATION_CLASS FileBasicInformation = 4;
++
++typedef NTSTATUS (NTAPI *NtQueryInformationFileFunc)(
++    HANDLE FileHandle,
++    PIO_STATUS_BLOCK IoStatusBlock,
++    PVOID FileInformation,
++    ULONG Length,
++    FILE_INFORMATION_CLASS FileInformationClass
++);
++static NtQueryInformationFileFunc Py_NtQueryInformationFile;
++
++typedef NTSTATUS (NTAPI *NtSetInformationFileFunc)(
++    HANDLE FileHandle,
++    PIO_STATUS_BLOCK IoStatusBlock,
++    PVOID FileInformation,
++    ULONG Length,
++    FILE_INFORMATION_CLASS FileInformationClass
++);
++static NtSetInformationFileFunc Py_NtSetInformationFile;
++
++typedef NTSTATUS (NTAPI *NtFsControlFileFunc)(
++    HANDLE FileHandle,
++    HANDLE Event,
++    PIO_APC_ROUTINE ApcRoutine,
++    PVOID ApcContext,
++    PIO_STATUS_BLOCK IoStatusBlock,
++    ULONG FsControlCode,
++    PVOID InputBuffer,
++    ULONG InputBufferLength,
++    PVOID OutputBuffer,
++    ULONG OutputBufferLength
++);
++static NtFsControlFileFunc Py_NtFsControlFile;
++
++typedef ULONG (NTAPI *RtlNtStatusToDosErrorFunc)(
++    NTSTATUS Status
++);
++static RtlNtStatusToDosErrorFunc Py_RtlNtStatusToDosError;
++
++static inline BOOL set_ntstatus(NTSTATUS status)
++{
++    if (status) SetLastError(Py_RtlNtStatusToDosError(status));
++    return !status;
++}
++
++static inline BOOL is_same_file(HANDLE h1, HANDLE h2)
++{
++    FILE_OBJECTID_BUFFER id1, id2;
++    IO_STATUS_BLOCK io;
++
++    return (!Py_NtFsControlFile(h1, 0, NULL, NULL, &io, FSCTL_GET_OBJECT_ID, NULL, 0, &id1, sizeof(id1)) &&
++        !Py_NtFsControlFile(h2, 0, NULL, NULL, &io, FSCTL_GET_OBJECT_ID, NULL, 0, &id2, sizeof(id2)) &&
++        !memcmp(&id1.ObjectId, &id2.ObjectId, sizeof(id1.ObjectId)));
++}
++
++static inline BOOL copy_file(const WCHAR *source, const WCHAR *dest, COPYFILE2_EXTENDED_PARAMETERS *params)
++{
++    DWORD flags = params ? params->dwCopyFlags : 0;
++    BOOL *cancel_ptr = params ? params->pfCancel : NULL;
++    PCOPYFILE2_PROGRESS_ROUTINE progress = params ? params->pProgressRoutine : NULL;
++
++    static const int buffer_size = 65536;
++    HANDLE h1, h2;
++    FILE_BASIC_INFORMATION info;
++    IO_STATUS_BLOCK io;
++    DWORD count;
++    BOOL ret = FALSE;
++    char *buffer;
++
++    if (cancel_ptr || progress || flags & (COPY_FILE_RESTARTABLE | COPY_FILE_COPY_SYMLINK | COPY_FILE_OPEN_SOURCE_FOR_WRITE)) {
++        SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
++        return FALSE;
++    }
++    if (!source || !dest)
++    {
++        SetLastError(ERROR_INVALID_PARAMETER);
++        return FALSE;
++    }
++
++    if (!(buffer = HeapAlloc(GetProcessHeap(), 0, buffer_size)))
++    {
++        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
++        return FALSE;
++    }
++
++    if ((h1 = CreateFileW(source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++        NULL, OPEN_EXISTING, 0, 0)) == INVALID_HANDLE_VALUE)
++    {
++        HeapFree(GetProcessHeap(), 0, buffer);
++        return FALSE;
++    }
++
++    if (!set_ntstatus(Py_NtQueryInformationFile(h1, &io, &info, sizeof(info), FileBasicInformation)))
++    {
++        HeapFree(GetProcessHeap(), 0, buffer);
++        CloseHandle(h1);
++        return FALSE;
++    }
++
++    if (!(flags & COPY_FILE_FAIL_IF_EXISTS))
++    {
++        BOOL same_file = FALSE;
++        h2 = CreateFileW(dest, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, 0);
++        if (h2 != INVALID_HANDLE_VALUE)
++        {
++            same_file = is_same_file(h1, h2);
++            CloseHandle(h2);
++        }
++        if (same_file)
++        {
++            HeapFree(GetProcessHeap(), 0, buffer);
++            CloseHandle(h1);
++            SetLastError(ERROR_SHARING_VIOLATION);
++            return FALSE;
++        }
++    }
++
++    if ((h2 = CreateFileW(dest, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
++        (flags & COPY_FILE_FAIL_IF_EXISTS) ? CREATE_NEW : CREATE_ALWAYS,
++        info.FileAttributes, h1)) == INVALID_HANDLE_VALUE)
++    {
++        HeapFree(GetProcessHeap(), 0, buffer);
++        CloseHandle(h1);
++        return FALSE;
++    }
++
++    while (ReadFile(h1, buffer, buffer_size, &count, NULL) && count)
++    {
++        char *p = buffer;
++        while (count != 0)
++        {
++            DWORD res;
++            if (!WriteFile(h2, p, count, &res, NULL) || !res) goto done;
++            p += res;
++            count -= res;
++        }
++    }
++    ret = TRUE;
++done:
++    /* Maintain the timestamp of source file to destination file and read-only attribute */
++    info.FileAttributes &= FILE_ATTRIBUTE_READONLY;
++    Py_NtSetInformationFile(h2, &io, &info, sizeof(info), FileBasicInformation);
++    HeapFree(GetProcessHeap(), 0, buffer);
++    CloseHandle(h1);
++    CloseHandle(h2);
++    if (ret) SetLastError(0);
++    return ret;
++}
++
++static HRESULT WINAPI Py_CopyFile2_impl(PCWSTR pwszExistingFileName, PCWSTR pwszNewFileName, COPYFILE2_EXTENDED_PARAMETERS *pExtendedParameters)
++{
++    return copy_file(pwszExistingFileName, pwszNewFileName, pExtendedParameters) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
++}
++
++typedef HRESULT (WINAPI *CopyFile2Func)(
++    PCWSTR pwszExistingFileName,
++    PCWSTR pwszNewFileName,
++    COPYFILE2_EXTENDED_PARAMETERS *pExtendedParameters
++);
++static CopyFile2Func Py_CopyFile2;
+ 
+ /*[clinic input]
+ _winapi.CopyFile2
+@@ -2931,7 +3100,7 @@ _winapi_CopyFile2_impl(PyObject *module, LPCWSTR existing_file_name,
+     }
+     */
+     Py_BEGIN_ALLOW_THREADS;
+-    hr = CopyFile2(existing_file_name, new_file_name, &params);
++    hr = Py_CopyFile2(existing_file_name, new_file_name, &params);
+     Py_END_ALLOW_THREADS;
+     /* For future implementation.
+     if (progress_routine != Py_None) {
+@@ -3228,5 +3397,19 @@ static struct PyModuleDef winapi_module = {
+ PyMODINIT_FUNC
+ PyInit__winapi(void)
+ {
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (!hKernel32) return NULL;
++    if (!(Py_CopyFile2 = (CopyFile2Func)GetProcAddress(hKernel32, "CopyFile2"))) {
++        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
++        if (!hNtdll) return NULL;
++        if (!(Py_NtQueryInformationFile = (NtQueryInformationFileFunc)GetProcAddress(hNtdll, "NtQueryInformationFile")) ||
++            !(Py_NtSetInformationFile = (NtSetInformationFileFunc)GetProcAddress(hNtdll, "NtSetInformationFile")) ||
++            !(Py_NtFsControlFile = (NtFsControlFileFunc)GetProcAddress(hNtdll, "NtFsControlFile")) ||
++            !(Py_RtlNtStatusToDosError = (RtlNtStatusToDosErrorFunc)GetProcAddress(hNtdll, "RtlNtStatusToDosError")))
++        {
++            return NULL;
++        }
++        Py_CopyFile2 = Py_CopyFile2_impl;
++    }
+     return PyModuleDef_Init(&winapi_module);
+ }
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+index 51e34b5..0cb55fe 100644
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -17,6 +17,7 @@
+ #include "pycore_ceval.h"         // _PyEval_ReInitThreads()
+ #include "pycore_fileutils.h"     // _Py_closerange()
+ #include "pycore_initconfig.h"    // _PyStatus_EXCEPTION()
++#include "pycore_lock.h"          // _PyOnceFlag_CallOnce()
+ #include "pycore_long.h"          // _PyLong_IsNegative()
+ #include "pycore_moduleobject.h"  // _PyModule_GetState()
+ #include "pycore_object.h"        // _PyObject_LookupSpecial()
+@@ -9366,6 +9367,30 @@ win32_getppid_fast(void)
+     return cached_ppid;
+ }
+ 
++static _PyOnceFlag once;
++typedef DWORD (WINAPI *PssCaptureSnapshotFunc)(HANDLE ProcessHandle, PSS_CAPTURE_FLAGS CaptureFlags, DWORD ThreadContextFlags, HPSS* SnapshotHandle);
++typedef DWORD (WINAPI *PssQuerySnapshotFunc)(HPSS SnapshotHandle, PSS_QUERY_INFORMATION_CLASS InformationClass, void* Buffer, DWORD BufferLength);
++typedef DWORD (WINAPI *PssFreeSnapshotFunc)(HANDLE ProcessHandle, HPSS SnapshotHandle);
++static PssCaptureSnapshotFunc Py_PssCaptureSnapshot;
++static PssQuerySnapshotFunc Py_PssQuerySnapshot;
++static PssFreeSnapshotFunc Py_PssFreeSnapshot;
++
++static int Py_ProcessSnapshot_Init(void *Py_UNUSED(arg))
++{
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (hKernel32) {
++        Py_PssCaptureSnapshot = (PssCaptureSnapshotFunc)GetProcAddress(hKernel32, "PssCaptureSnapshot");
++        Py_PssQuerySnapshot = (PssQuerySnapshotFunc)GetProcAddress(hKernel32, "PssQuerySnapshot");
++        Py_PssFreeSnapshot = (PssFreeSnapshotFunc)GetProcAddress(hKernel32, "PssFreeSnapshot");
++        if (!Py_PssCaptureSnapshot || !Py_PssQuerySnapshot || !Py_PssFreeSnapshot) {
++            Py_PssCaptureSnapshot = NULL;
++            Py_PssQuerySnapshot = NULL;
++            Py_PssFreeSnapshot = NULL;
++        }
++    }
++    return 0;
++}
++
+ static PyObject*
+ win32_getppid(void)
+ {
+@@ -9381,24 +9406,28 @@ win32_getppid(void)
+     }
+ 
+     // If failure occurs in win32_getppid_fast(), fall back to using the PSS API.
++    _PyOnceFlag_CallOnce(&once, Py_ProcessSnapshot_Init, NULL);
++    if (Py_PssCaptureSnapshot) {
++        error = Py_PssCaptureSnapshot(process, PSS_CAPTURE_NONE, 0, &snapshot);
++        if (error != ERROR_SUCCESS) {
++            return PyErr_SetFromWindowsErr(error);
++        }
+ 
+-    error = PssCaptureSnapshot(process, PSS_CAPTURE_NONE, 0, &snapshot);
+-    if (error != ERROR_SUCCESS) {
+-        return PyErr_SetFromWindowsErr(error);
+-    }
++        PSS_PROCESS_INFORMATION info;
++        error = Py_PssQuerySnapshot(snapshot, PSS_QUERY_PROCESS_INFORMATION, &info,
++            sizeof(info));
++        if (error == ERROR_SUCCESS) {
++            result = PyLong_FromUnsignedLong(info.ParentProcessId);
++        } else {
++            result = PyErr_SetFromWindowsErr(error);
++        }
+ 
+-    PSS_PROCESS_INFORMATION info;
+-    error = PssQuerySnapshot(snapshot, PSS_QUERY_PROCESS_INFORMATION, &info,
+-                             sizeof(info));
+-    if (error == ERROR_SUCCESS) {
+-        result = PyLong_FromUnsignedLong(info.ParentProcessId);
+-    }
+-    else {
+-        result = PyErr_SetFromWindowsErr(error);
++        Py_PssFreeSnapshot(process, snapshot);
++        return result;
++    } else {
++        PyErr_SetString(PyExc_OSError, "unable to obtain parent PID");
++        return NULL;
+     }
+-
+-    PssFreeSnapshot(process, snapshot);
+-    return result;
+ }
+ #endif /*MS_WINDOWS*/
+ 
+diff --git a/Python/fileutils.c b/Python/fileutils.c
+index c9ae1b3..9ea55a5 100644
+--- a/Python/fileutils.c
++++ b/Python/fileutils.c
+@@ -1492,11 +1492,17 @@ set_inheritable(int fd, int inheritable, int raise, int *atomic_flag_works)
+     else
+         flags = 0;
+ 
+-    if (!SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
++    /* This check can be removed once support for Windows 7 ends. */
++#define CONSOLE_PSEUDOHANDLE(handle) (((ULONG_PTR)(handle) & 0x3) == 0x3 && \
++        GetFileType(handle) == FILE_TYPE_CHAR)
++
++    if (!CONSOLE_PSEUDOHANDLE(handle) &&
++        !SetHandleInformation(handle, HANDLE_FLAG_INHERIT, flags)) {
+         if (raise)
+             PyErr_SetFromWindowsErr(0);
+         return -1;
+     }
++#undef CONSOLE_PSEUDOHANDLE
+     return 0;
+ 
+ #else
+diff --git a/Python/pytime.c b/Python/pytime.c
+index 560aea3..087d9cf 100644
+--- a/Python/pytime.c
++++ b/Python/pytime.c
+@@ -1,4 +1,5 @@
+ #include "Python.h"
++#include "pycore_lock.h"          // _PyOnceFlag_CallOnce()
+ #include "pycore_time.h"          // PyTime_t
+ 
+ #include <time.h>                 // gmtime_r()
+@@ -7,6 +8,7 @@
+ #endif
+ #ifdef MS_WINDOWS
+ #  include <winsock2.h>           // struct timeval
++#  include <windows.h>
+ #endif
+ 
+ #if defined(__APPLE__)
+@@ -893,6 +895,22 @@ _PyTime_AsTimespec(PyTime_t t, struct timespec *ts)
+ #endif
+ 
+ 
++#ifdef MS_WINDOWS
++static _PyOnceFlag once;
++typedef VOID (WINAPI *GetSystemTimePreciseAsFileTimeFunc)(LPFILETIME lpSystemTimeAsFileTime);
++static GetSystemTimePreciseAsFileTimeFunc Py_GetSystemTimePreciseAsFileTime;
++
++static int Py_GetSystemTimePreciseAsFileTime_Init(void *Py_UNUSED(arg))
++{
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (hKernel32) {
++        Py_GetSystemTimePreciseAsFileTime = (GetSystemTimePreciseAsFileTimeFunc)GetProcAddress(hKernel32, "GetSystemTimePreciseAsFileTime");
++    }
++    return 0;
++}
++#endif
++
++
+ // N.B. If raise_exc=0, this may be called without the GIL.
+ static int
+ py_get_system_clock(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+@@ -907,7 +925,12 @@ py_get_system_clock(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+     FILETIME system_time;
+     ULARGE_INTEGER large;
+ 
+-    GetSystemTimePreciseAsFileTime(&system_time);
++    _PyOnceFlag_CallOnce(&once, Py_GetSystemTimePreciseAsFileTime_Init, NULL);
++    if (Py_GetSystemTimePreciseAsFileTime) {
++        Py_GetSystemTimePreciseAsFileTime(&system_time);
++    } else {
++        GetSystemTimeAsFileTime(&system_time);
++    }
+     large.u.LowPart = system_time.dwLowDateTime;
+     large.u.HighPart = system_time.dwHighDateTime;
+     /* 11,644,473,600,000,000,000: number of nanoseconds between
+@@ -916,17 +939,32 @@ py_get_system_clock(PyTime_t *tp, _Py_clock_info_t *info, int raise_exc)
+     PyTime_t ns = large.QuadPart * 100 - 11644473600000000000;
+     *tp = ns;
+     if (info) {
+-        // GetSystemTimePreciseAsFileTime() is implemented using
+-        // QueryPerformanceCounter() internally.
+-        if (py_qpc_base.denom == 0) {
+-            if (py_win_perf_counter_frequency(&py_qpc_base, raise_exc) < 0) {
++        if (Py_GetSystemTimePreciseAsFileTime) {
++            // GetSystemTimePreciseAsFileTime() is implemented using
++            // QueryPerformanceCounter() internally.
++            if (py_qpc_base.denom == 0) {
++                if (py_win_perf_counter_frequency(&py_qpc_base, raise_exc) < 0) {
++                    return -1;
++                }
++            }
++
++            info->implementation = "GetSystemTimePreciseAsFileTime()";
++            info->resolution = _PyTimeFraction_Resolution(&py_qpc_base);
++        } else {
++            DWORD timeAdjustment, timeIncrement;
++            BOOL isTimeAdjustmentDisabled, ok;
++
++            info->implementation = "GetSystemTimeAsFileTime()";
++            ok = GetSystemTimeAdjustment(&timeAdjustment, &timeIncrement,
++                                         &isTimeAdjustmentDisabled);
++            if (!ok) {
++                PyErr_SetFromWindowsErr(0);
+                 return -1;
+             }
++            info->resolution = timeIncrement * 1e-7;
+         }
+ 
+-        info->implementation = "GetSystemTimePreciseAsFileTime()";
+         info->monotonic = 0;
+-        info->resolution = _PyTimeFraction_Resolution(&py_qpc_base);
+         info->adjustable = 1;
+     }
+ 
