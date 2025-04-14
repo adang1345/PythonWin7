@@ -1,0 +1,14 @@
+diff --git a/Tools/msi/bundle/bundle.wxs b/Tools/msi/bundle/bundle.wxs
+--- a/Tools/msi/bundle/bundle.wxs
++++ b/Tools/msi/bundle/bundle.wxs
+@@ -93,9 +93,9 @@
+     <Variable Name="SimpleInstallDescription" Value="" bal:Overridable="yes" />
+     
+     <Chain ParallelCache="yes">
+-      <PackageGroupRef Id="crt" />
+       <PackageGroupRef Id="core" />
+       <PackageGroupRef Id="exe" />
++      <PackageGroupRef Id="crt" />
+       <PackageGroupRef Id="dev" />
+       <PackageGroupRef Id="lib" />
+       <PackageGroupRef Id="test" />

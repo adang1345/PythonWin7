@@ -1,0 +1,52 @@
+diff --git a/PCbuild/python.props b/PCbuild/python.props
+--- a/PCbuild/python.props
++++ b/PCbuild/python.props
+@@ -11,6 +11,7 @@
+ 
+     We set BasePlatformToolset for ICC's benefit, it's otherwise ignored.
+     -->
++    <BasePlatformToolset Condition="'$(BasePlatformToolset)' == '' and '$(VisualStudioVersion)' == '17.0'">v143</BasePlatformToolset>
+     <BasePlatformToolset Condition="'$(BasePlatformToolset)' == '' and ('$(MSBuildToolsVersion)' == '16.0' or '$(VisualStudioVersion)' == '16.0')">v142</BasePlatformToolset>
+     <BasePlatformToolset Condition="'$(BasePlatformToolset)' == '' and ('$(MSBuildToolsVersion)' == '15.0' or '$(VisualStudioVersion)' == '15.0')">v141</BasePlatformToolset>
+     <BasePlatformToolset Condition="'$(BasePlatformToolset)' == '' and '$(VCTargetsPath14)' != ''">v140</BasePlatformToolset>
+@@ -106,9 +107,6 @@
+     <!-- Sometimes the version in the registry has to .0 suffix, and sometimes it doesn't. Check and add it -->
+     <_RegistryVersion Condition="$(_RegistryVersion) != '' and !$(_RegistryVersion.EndsWith('.0'))">$(_RegistryVersion).0</_RegistryVersion>
+ 
+-    <!-- Avoid upgrading to Windows 11 SDK for now, but assume the latest Win10 SDK is installed -->
+-    <_RegistryVersion Condition="$([System.Version]::Parse($(_RegistryVersion))) >= $([System.Version]::Parse(`10.0.22000.0`))">10.0.19041.0</_RegistryVersion>
+-
+     <!-- The minimum allowed SDK version to use for building -->
+     <DefaultWindowsSDKVersion>10.0.10586.0</DefaultWindowsSDKVersion>
+     <DefaultWindowsSDKVersion Condition="$([System.Version]::Parse($(_RegistryVersion))) > $([System.Version]::Parse($(DefaultWindowsSDKVersion)))">$(_RegistryVersion)</DefaultWindowsSDKVersion>
+diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
+--- a/PCbuild/pythoncore.vcxproj
++++ b/PCbuild/pythoncore.vcxproj
+@@ -512,7 +512,7 @@
+       </ClCompile>
+     </ItemGroup>
+   </Target>
+-  <Target Name="_WarnAboutToolset" BeforeTargets="PrepareForBuild" Condition="$(PlatformToolset) != 'v140' and $(PlatformToolset) != 'v141' and $(PlatformToolset) != 'v142'">
++  <Target Name="_WarnAboutToolset" BeforeTargets="PrepareForBuild" Condition="$(PlatformToolset) != 'v140' and $(PlatformToolset) != 'v141' and $(PlatformToolset) != 'v142' and $(PlatformToolset) != 'v143'">
+     <Warning Text="Toolset $(PlatformToolset) is not used for official builds. Your build may have errors or incompatibilities." />
+   </Target>
+   <Target Name="_WarnAboutZlib" BeforeTargets="PrepareForBuild" Condition="!$(IncludeExternals)">
+diff --git a/Tools/msi/bundle/bootstrap/pythonba.vcxproj b/Tools/msi/bundle/bootstrap/pythonba.vcxproj
+--- a/Tools/msi/bundle/bootstrap/pythonba.vcxproj
++++ b/Tools/msi/bundle/bootstrap/pythonba.vcxproj
+@@ -21,6 +21,7 @@
+   <PropertyGroup Label="Globals">
+     <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+     <Platform Condition="'$(Platform)' == ''">Win32</Platform>
++    <PlatformToolset Condition="'$(PlatformToolset)' == '' and '$(VisualStudioVersion)' == '17.0'">v143</PlatformToolset>
+     <PlatformToolset Condition="'$(PlatformToolset)' == '' and '$(VCTargetsPath14)' != ''">v140</PlatformToolset>
+     <PlatformToolset Condition="'$(PlatformToolset)' == '' and '$(VCTargetsPath12)' != ''">v120</PlatformToolset>
+     <ProjectGuid>{7A09B132-B3EE-499B-A700-A4B2157FEA3D}</ProjectGuid>
+@@ -47,6 +48,7 @@
+     </ClCompile>
+     <Link>
+       <AdditionalDependencies>comctl32.lib;gdiplus.lib;msimg32.lib;shlwapi.lib;wininet.lib;dutil.lib;balutil.lib;version.lib;uxtheme.lib;%(AdditionalDependencies)</AdditionalDependencies>
++      <AdditionalLibraryDirectories Condition="$(PlatformToolset.StartsWith(`v14`))">$(WixInstallPath)sdk\vs2017\lib\x86</AdditionalLibraryDirectories>
+       <AdditionalLibraryDirectories Condition="'$(PlatformToolset)' == 'v140'">$(WixInstallPath)sdk\vs2015\lib\x86</AdditionalLibraryDirectories>
+       <AdditionalLibraryDirectories Condition="'$(PlatformToolset)' == 'v120'">$(WixInstallPath)sdk\vs2013\lib\x86</AdditionalLibraryDirectories>
+       <ModuleDefinitionFile>pythonba.def</ModuleDefinitionFile>

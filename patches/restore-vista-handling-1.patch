@@ -1,0 +1,86 @@
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -12183,6 +12183,12 @@ get_terminal_size(PyObject *self, PyObject *args)
+ #endif /* defined(TERMSIZE_USE_CONIO) || defined(TERMSIZE_USE_IOCTL) */
+ 
+ 
++#ifdef MS_WINDOWS
++typedef DWORD (WINAPI *GetActiveProcessorCountFunc)(WORD GroupNumber);
++static GetActiveProcessorCountFunc Py_GetActiveProcessorCount;
++#endif
++
++
+ /*[clinic input]
+ os.cpu_count
+ 
+@@ -12199,9 +12205,13 @@ os_cpu_count_impl(PyObject *module)
+ {
+     int ncpu = 0;
+ #ifdef MS_WINDOWS
+-    /* Declare prototype here to avoid pulling in all of the Win7 APIs in 3.8 */
+-    DWORD WINAPI GetActiveProcessorCount(WORD group);
+-    ncpu = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
++    if (Py_GetActiveProcessorCount) {
++        ncpu = Py_GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
++    } else {
++        SYSTEM_INFO sysinfo;
++        GetSystemInfo(&sysinfo);
++        ncpu = sysinfo.dwNumberOfProcessors;
++    }
+ #elif defined(__hpux)
+     ncpu = mpctl(MPC_GETNUMSPUS, NULL, NULL);
+ #elif defined(HAVE_SYSCONF) && defined(_SC_NPROCESSORS_ONLN)
+@@ -14392,6 +14402,12 @@ INITFUNC(void)
+     PyObject *list;
+     const char * const *trace;
+ 
++#ifdef MS_WINDOWS
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (!hKernel32) return NULL;
++    Py_GetActiveProcessorCount = (GetActiveProcessorCountFunc)GetProcAddress(hKernel32, "GetActiveProcessorCount");
++#endif
++
+     m = PyModule_Create(&posixmodule);
+     if (m == NULL)
+         return NULL;
+diff --git a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+--- a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
++++ b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+@@ -3026,8 +3026,16 @@ private:
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
+                 LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
+             } else if (IsWindowsVersionOrGreater(6, 0, 2)) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Target OS is Windows Server 2008 SP2 or later");
+-                return;
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 SP2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP2" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWS2K8MissingSP2)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2008 SP2 or later");
++                    return;
++                }
+             } else if (IsWindowsVersionOrGreater(6, 0, 0)) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008");
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 2 is required to continue installation");
+@@ -3057,7 +3065,16 @@ private:
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
+                 LocGetString(_wixLoc, L"#(loc.FailureWin7MissingSP1)", &pLocString);
+             } else if (IsWindowsVistaSP2OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Target OS is Windows Vista SP2");
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista SP2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP2" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureVistaMissingSP2)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Vista SP2 or later");
++                    return;
++                }
+                 return;
+             } else if (IsWindowsVistaOrGreater()) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista RTM or SP1");

@@ -1,0 +1,173 @@
+diff --git a/Modules/posixmodule.c b/Modules/posixmodule.c
+--- a/Modules/posixmodule.c
++++ b/Modules/posixmodule.c
+@@ -12541,6 +12541,12 @@ os_get_terminal_size_impl(PyObject *module, int fd)
+ #endif /* defined(TERMSIZE_USE_CONIO) || defined(TERMSIZE_USE_IOCTL) */
+ 
+ 
++#ifdef MS_WINDOWS
++typedef DWORD (WINAPI *GetActiveProcessorCountFunc)(WORD GroupNumber);
++static GetActiveProcessorCountFunc Py_GetActiveProcessorCount;
++#endif
++
++
+ /*[clinic input]
+ os.cpu_count
+ 
+@@ -12557,7 +12563,13 @@ os_cpu_count_impl(PyObject *module)
+ {
+     int ncpu = 0;
+ #ifdef MS_WINDOWS
+-    ncpu = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
++    if (Py_GetActiveProcessorCount) {
++        ncpu = Py_GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
++    } else {
++        SYSTEM_INFO sysinfo;
++        GetSystemInfo(&sysinfo);
++        ncpu = sysinfo.dwNumberOfProcessors;
++    }
+ #elif defined(__hpux)
+     ncpu = mpctl(MPC_GETNUMSPUS, NULL, NULL);
+ #elif defined(HAVE_SYSCONF) && defined(_SC_NPROCESSORS_ONLN)
+@@ -15039,6 +15051,11 @@ static struct PyModuleDef posixmodule = {
+ PyMODINIT_FUNC
+ INITFUNC(void)
+ {
++#ifdef MS_WINDOWS
++    HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++    if (!hKernel32) return NULL;
++    Py_GetActiveProcessorCount = (GetActiveProcessorCountFunc)GetProcAddress(hKernel32, "GetActiveProcessorCount");
++#endif
+     return PyModuleDef_Init(&posixmodule);
+ }
+ 
+diff --git a/Tools/msi/bundle/Default.wxl b/Tools/msi/bundle/Default.wxl
+--- a/Tools/msi/bundle/Default.wxl
++++ b/Tools/msi/bundle/Default.wxl
+@@ -121,9 +121,26 @@ Feel free to email &lt;a href="mailto:python-list@python.org"&gt;python-list@pyt
+   <String Id="FailureRestartButton">&amp;Restart</String>
+   <String Id="FailureExistingInstall">Unable to install [WixBundleName] due to an existing install. Use Programs and Features to modify, repair or remove [WixBundleName].</String>
+   
+-  <String Id="FailureOldOS">At least Windows 8.1 or Windows Server 2012 are required to install [WixBundleName]
++  <String Id="FailureWin7MissingSP1">Windows 7 Service Pack 1 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%207%20service%20pack%201"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
++  <String Id="FailureVistaMissingSP2">Windows Vista Service Pack 2 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%20vista%20service%20pack%202"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
++  <String Id="FailureXPOrEarlier">Windows Vista or later is required to install and use [WixBundleName].
++
++Visit &lt;a href="https://www.python.org/"&gt;python.org&lt;/a&gt; to download Python 3.4.</String>
++
++  <String Id="FailureWS2K8R2MissingSP1">Windows Server 2008 R2 Service Pack 1 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%20server%202008%20r2%20service%20pack%201"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
++  <String Id="FailureWS2K8MissingSP2">Windows Server 2008 Service Pack 2 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%20server%202008%20service%20pack%202"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
++  <String Id="FailureWS2K3OrEarlier">Windows Server 2008 SP2 or later is required to install and use [WixBundleName].
++
++Visit &lt;a href="https://www.python.org/"&gt;python.org&lt;/a&gt; to download Python 3.4.</String>
+ 
+-Visit &lt;a href="https://www.python.org/"&gt;python.org&lt;/a&gt; to download an earlier version of Python.</String>
+   <String Id="SuccessMaxPathButton">Disable path length limit</String>
+   <String Id="SuccessMaxPathButtonNote">Changes your machine configuration to allow programs, including Python, to bypass the 260 character "MAX_PATH" limitation.</String>
+ </WixLocalization>
+diff --git a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+--- a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
++++ b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+@@ -3011,35 +3011,81 @@ private:
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2012 or later");
+                 return;
+             } else if (IsWindowsVersionOrGreater(6, 1, 1)) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Detected Windows Server 2008 R2");
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 R2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP1" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2008 R2 or later");
++                    return;
++                }
+             } else if (IsWindowsVersionOrGreater(6, 1, 0)) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 R2");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
++            } else if (IsWindowsVersionOrGreater(6, 0, 2)) {
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 SP2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP2" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWS2K8MissingSP2)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2008 SP2 or later");
++                    return;
++                }
+             } else if (IsWindowsVersionOrGreater(6, 0, 0)) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 2 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K8MissingSP2)", &pLocString);
+             } else {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2003 or earlier");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Server 2008 SP2 or later is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K3OrEarlier)", &pLocString);
+             }
+-            BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Server 2012 or later is required to continue installation");
+         } else {
+-            if (IsWindows10OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 10 or later");
+-                return;
+-            } else if (IsWindows8Point1OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 8.1");
++            if (IsWindows8OrGreater()) {
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 8 or later");
+                 return;
+-            } else if (IsWindows8OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 8");
++            } else if (IsWindows7SP1OrGreater()) {
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7 SP1 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP1" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWin7MissingSP1)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 7 SP1 or later");
++                    return;
++                }
+             } else if (IsWindows7OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7 RTM");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWin7MissingSP1)", &pLocString);
++            } else if (IsWindowsVistaSP2OrGreater()) {
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista SP2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP2" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureVistaMissingSP2)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Vista SP2 or later");
++                    return;
++                }
+             } else if (IsWindowsVistaOrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista RTM or SP1");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 2 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureVistaMissingSP2)", &pLocString);
+             } else { 
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows XP or earlier");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Vista SP2 or later is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureXPOrEarlier)", &pLocString);
+             }
+-            BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows 8.1 or later is required to continue installation");
+         }
+ 
+-        LocGetString(_wixLoc, L"#(loc.FailureOldOS)", &pLocString);
+         if (pLocString && pLocString->wzText) {
+             BalFormatString(pLocString->wzText, &_failedMessage);
+         }
