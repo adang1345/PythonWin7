@@ -1,0 +1,153 @@
+diff --git a/PC/layout/main.py b/PC/layout/main.py
+--- a/PC/layout/main.py
++++ b/PC/layout/main.py
+@@ -41,7 +41,7 @@ TCLTK_FILES_ONLY = FileNameSet("turtle.py")
+ 
+ VENV_DIRS_ONLY = FileNameSet("venv", "ensurepip")
+ 
+-EXCLUDE_FROM_DLLS = FileStemSet("python*", "pyshellext", "vcruntime*")
++EXCLUDE_FROM_DLLS = FileStemSet("python*", "pyshellext", "vcruntime*", "api-ms-*")
+ EXCLUDE_FROM_LIB = FileNameSet("*.pyc", "__pycache__", "*.pickle")
+ EXCLUDE_FROM_PACKAGED_LIB = FileNameSet("readme.txt")
+ EXCLUDE_FROM_COMPILE = FileNameSet("badsyntax_*", "bad_*")
+@@ -200,6 +200,12 @@ def get_layout(ns):
+     if not found_any:
+         log_error("Failed to locate vcruntime DLL in the build.")
+ 
++    for dest, src in rglob(ns.build, "api-ms-win-core-path-l1-1-0.dll"):
++        yield dest, src
++        break
++    else:
++        log_error("Failed to locate api-ms-win-core-path-l1-1-0.dll in the build.")
++
+     yield "LICENSE.txt", ns.build / "LICENSE.txt"
+ 
+     dest = "" if ns.flat_dlls else "DLLs/"
+diff --git a/PC/layout/support/python.props b/PC/layout/support/python.props
+--- a/PC/layout/support/python.props
++++ b/PC/layout/support/python.props
+@@ -31,6 +31,7 @@
+     <ItemGroup>
+       <_PythonRuntimeExe Include="$(PythonHome)\python*.dll" />
+       <_PythonRuntimeExe Include="$(PythonHome)\vcruntime140.dll" />
++      <_PythonRuntimeExe Include="$(PythonHome)\api-ms-win-core-path-l1-1-0.dll" />
+       <_PythonRuntimeExe Include="$(PythonHome)\python*.exe" Condition="$(IncludePythonExe) == 'true'" />
+       <_PythonRuntimeExe>
+         <Link>%(Filename)%(Extension)</Link>
+diff --git a/PCbuild/get_api-ms-win-core-path.py b/PCbuild/get_api-ms-win-core-path.py
+new file mode 100644
+--- /dev/null
++++ b/PCbuild/get_api-ms-win-core-path.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python3
++
++import argparse
++import os
++import pathlib
++import zipfile
++from urllib.request import urlretrieve
++
++
++def fetch_zip(zip_dir, verbose):
++    url = "https://github.com/adang1345/api-ms-win-core-path/releases/latest/download/api-ms-win-core-path.zip"
++    reporthook = None
++    if verbose:
++        reporthook = print
++    zip_dir.mkdir(parents=True, exist_ok=True)
++    filename, headers = urlretrieve(
++        url,
++        zip_dir / 'api-ms-win-core-path.zip',
++        reporthook=reporthook,
++    )
++    return filename
++
++
++def extract_zip(externals_dir, zip_path):
++    with zipfile.ZipFile(os.fspath(zip_path)) as zf:
++        zf.extractall(pathlib.Path(os.fspath(externals_dir)) / "api-ms-win-core-path")
++
++
++def parse_args():
++    p = argparse.ArgumentParser()
++    p.add_argument('-v', '--verbose', action='store_true')
++    p.add_argument('-e', '--externals-dir', type=pathlib.Path,
++                   help='Directory in which to store dependencies',
++                   default=pathlib.Path(__file__).parent.parent / 'externals')
++    return p.parse_args()
++
++
++def main():
++    args = parse_args()
++    zip_path = fetch_zip(
++        args.externals_dir / 'zips',
++        verbose=args.verbose,
++    )
++    final_name = args.externals_dir / "api-ms-win-core-path"
++    extract_zip(args.externals_dir, zip_path)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/PCbuild/get_externals.bat b/PCbuild/get_externals.bat
+--- a/PCbuild/get_externals.bat
++++ b/PCbuild/get_externals.bat
+@@ -93,6 +93,16 @@ for %%b in (%binaries%) do (
+     )
+ )
+ 
++if exist "%EXTERNALS_DIR%\api-ms-win-core-path" (
++    echo.api-ms-win-core-path already exists, skipping.
++) else if NOT DEFINED PYTHON (
++    echo.PYTHON is not defined
++    exit /b 1
++) else (
++    echo.Fetching api-ms-win-core-path...
++    %PYTHON% -E "%PCBUILD%\get_api-ms-win-core-path.py" -e "%EXTERNALS_DIR%"
++)
++
+ echo Finished.
+ goto end
+ 
+diff --git a/PCbuild/python.props b/PCbuild/python.props
+--- a/PCbuild/python.props
++++ b/PCbuild/python.props
+@@ -73,6 +73,7 @@
+     <opensslIncludeDir Condition="$(opensslIncludeDir) == ''">$(opensslOutDir)include</opensslIncludeDir>
+     <nasmDir Condition="$(nasmDir) == ''">$(ExternalsDir)\nasm-2.11.06\</nasmDir>
+     <zlibDir Condition="$(zlibDir) == ''">$(ExternalsDir)\zlib-1.3.1\</zlibDir>
++    <apimswincorepathDir>$(ExternalsDir)\api-ms-win-core-path\</apimswincorepathDir>
+   </PropertyGroup>
+ 
+   <PropertyGroup>
+diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
+--- a/PCbuild/pythoncore.vcxproj
++++ b/PCbuild/pythoncore.vcxproj
+@@ -555,6 +555,15 @@
+     <Warning Text="A copy of vcruntime140.dll is also required" Condition="!$(VCToolsRedistVersion.StartsWith(`14.`))" />
+     <Copy SourceFiles="%(VCRuntimeDLL.FullPath)" DestinationFolder="$(OutDir)" />
+   </Target>
++  <Target Name="_CopyWin7Patch_x86" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'Win32'">
++    <Copy SourceFiles="$(apimswincorepathDir)\x86\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++  </Target>
++  <Target Name="_CopyWin7Patch_x64" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'x64'">
++    <Copy SourceFiles="$(apimswincorepathDir)\x64\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++  </Target>
++  <Target Name="_CleanWin7Patch" AfterTargets="Clean">
++    <Delete Files="$(OutDir)api-ms-win-core-path-l1-1-0.dll" />
++  </Target>
+   <Target Name="_CleanVCRuntime" AfterTargets="Clean">
+     <Delete Files="@(VCRuntimeDLL->'$(OutDir)%(Filename)%(Extension)')" />
+   </Target>
+diff --git a/Tools/msi/exe/exe_files.wxs b/Tools/msi/exe/exe_files.wxs
+--- a/Tools/msi/exe/exe_files.wxs
++++ b/Tools/msi/exe/exe_files.wxs
+@@ -32,6 +32,9 @@
+             <Component Id="vcruntime140.dll" Directory="InstallDirectory" Guid="*">
+                 <File Name="vcruntime140.dll" Source="vcruntime140.dll" KeyPath="yes" />
+             </Component>
++            <Component Id="Win7Patch" Directory="InstallDirectory" Guid="*">
++                <File Name="api-ms-win-core-path-l1-1-0.dll" Source="api-ms-win-core-path-l1-1-0.dll" KeyPath="yes" />
++            </Component>
+ <?ifdef Include_Vcruntime140_1_dll ?>
+             <Component Id="vcruntime140_1.dll" Directory="InstallDirectory" Guid="*">
+                 <File Name="vcruntime140_1.dll" Source="vcruntime140_1.dll" KeyPath="yes" />
