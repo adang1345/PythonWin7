@@ -1,0 +1,17 @@
+diff --git a/Tools/msi/bundle/bundle.wxs b/Tools/msi/bundle/bundle.wxs
+--- a/Tools/msi/bundle/bundle.wxs
++++ b/Tools/msi/bundle/bundle.wxs
+@@ -99,11 +99,11 @@
+     <Variable Name="SimpleInstallDescription" Value="" bal:Overridable="yes" />
+ 
+     <Chain ParallelCache="yes">
++      <PackageGroupRef Id="core" />
++      <PackageGroupRef Id="exe" />
+       <?if $(var.Platform)!="ARM64" ?>
+       <PackageGroupRef Id="crt" />
+       <?endif ?>
+-      <PackageGroupRef Id="core" />
+-      <PackageGroupRef Id="exe" />
+       <PackageGroupRef Id="dev" />
+       <PackageGroupRef Id="lib" />
+       <PackageGroupRef Id="test" />
