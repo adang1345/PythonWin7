@@ -1,0 +1,147 @@
+diff --git a/Tools/msi/buildrelease.bat b/Tools/msi/buildrelease.bat
+index 69dd145..9e8a45b 100644
+--- a/Tools/msi/buildrelease.bat
++++ b/Tools/msi/buildrelease.bat
+@@ -178,9 +178,7 @@ if "%OUTDIR_PLAT%" EQU "win32" (
+ 
+ set BUILDOPTS=/p:Platform=%1 /p:BuildForRelease=true /p:DownloadUrl=%DOWNLOAD_URL% /p:DownloadUrlBase=%DOWNLOAD_URL_BASE% /p:ReleaseUri=%RELEASE_URI%
+ if defined BUILDMSI (
+-    %MSBUILD% "%D%bundle\releaselocal.wixproj" /t:Rebuild %BUILDOPTS% %CERTOPTS% /p:RebuildAll=true
+-    if errorlevel 1 exit /B %ERRORLEVEL%
+-    %MSBUILD% "%D%bundle\releaseweb.wixproj" /t:Rebuild %BUILDOPTS% %CERTOPTS% /p:RebuildAll=false
++    %MSBUILD% "%D%bundle\full.wixproj" /t:Rebuild %BUILDOPTS% %CERTOPTS% /p:RebuildAll=true
+     if errorlevel 1 exit /B %ERRORLEVEL%
+ )
+ 
+diff --git a/Tools/msi/bundle/Default.wxl b/Tools/msi/bundle/Default.wxl
+index 791ce6e..0e63929 100644
+--- a/Tools/msi/bundle/Default.wxl
++++ b/Tools/msi/bundle/Default.wxl
+@@ -88,8 +88,8 @@ Select Customize to review current options.</String>
+   <String Id="InstallLauncherAllUsersLabel">for &amp;all users (requires elevation)</String>
+   <String Id="ShortInstallLauncherAllUsersLabel">Install &amp;launcher for all users (recommended)</String>
+   <String Id="PrecompileLabel">&amp;Precompile standard library</String>
+-  <String Id="Include_symbolsLabel">Download debugging &amp;symbols</String>
+-  <String Id="Include_debugLabel">Download debu&amp;g binaries (requires VS 2017 or later)</String>
++  <String Id="Include_symbolsLabel">Install debugging &amp;symbols</String>
++  <String Id="Include_debugLabel">Install debu&amp;g binaries (requires VS 2017 or later)</String>
+   
+   <String Id="ProgressHeader">[ActionLikeInstallation] Progress</String>
+   <String Id="ProgressLabel">[ActionLikeInstalling]:</String>
+@@ -121,9 +121,17 @@ Feel free to email &lt;a href="mailto:python-list@python.org"&gt;python-list@pyt
+   <String Id="FailureRestartButton">&amp;Restart</String>
+   <String Id="FailureExistingInstall">Unable to install [WixBundleName] due to an existing install. Use Programs and Features to modify, repair or remove [WixBundleName].</String>
+   
+-  <String Id="FailureOldOS">At least Windows 8.1 or Windows Server 2012 are required to install [WixBundleName]
++  <String Id="FailureWin7MissingSP1">Windows 7 Service Pack 1 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%207%20service%20pack%201"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
++  <String Id="FailureVistaOrEarlier">Windows 7 SP1 or later is required to install and use [WixBundleName].
++
++Visit &lt;a href="https://www.python.org/"&gt;python.org&lt;/a&gt; to download Python 3.8.</String>
++
++  <String Id="FailureWS2K8R2MissingSP1">Windows Server 2008 R2 Service Pack 1 and all applicable updates are required to install [WixBundleName].
++
++Please &lt;a href="https://www.bing.com/search?q=how%20to%20install%20windows%20server%202008%20r2%20service%20pack%201"&gt;update your machine&lt;/a&gt; and then restart the installation.</String>
+ 
+-Visit &lt;a href="https://www.python.org/"&gt;python.org&lt;/a&gt; to download an earlier version of Python.</String>
+   <String Id="SuccessMaxPathButton">Disable path length limit</String>
+   <String Id="SuccessMaxPathButtonNote">Changes your machine configuration to allow programs, including Python, to bypass the 260 character "MAX_PATH" limitation.</String>
+ </WixLocalization>
+diff --git a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+index 3c54e40..4532389 100644
+--- a/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
++++ b/Tools/msi/bundle/bootstrap/PythonBootstrapperApplication.cpp
+@@ -3011,35 +3011,55 @@ private:
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2012 or later");
+                 return;
+             } else if (IsWindowsVersionOrGreater(6, 1, 1)) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Detected Windows Server 2008 R2");
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 R2 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP1" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows Server 2008 R2 or later");
++                    return;
++                }
+             } else if (IsWindowsVersionOrGreater(6, 1, 0)) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008 R2");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
+             } else if (IsWindowsVersionOrGreater(6, 0, 0)) {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2008");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Server 2008 SP2 or later is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
+             } else {
+                 BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Server 2003 or earlier");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Server 2008 SP2 or later is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWS2K8R2MissingSP1)", &pLocString);
+             }
+-            BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows Server 2012 or later is required to continue installation");
+         } else {
+-            if (IsWindows10OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 10 or later");
+-                return;
+-            } else if (IsWindows8Point1OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 8.1");
++            if (IsWindows8OrGreater()) {
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 8 or later");
+                 return;
+-            } else if (IsWindows8OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 8");
++            } else if (IsWindows7SP1OrGreater()) {
++                HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
++                if (hKernel32 && !GetProcAddress(hKernel32, "AddDllDirectory")) {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7 SP1 without KB2533623");
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "KB2533623 update is required to continue.");
++                    /* The "MissingSP1" error also specifies updates are required */
++                    LocGetString(_wixLoc, L"#(loc.FailureWin7MissingSP1)", &pLocString);
++                } else {
++                    BalLog(BOOTSTRAPPER_LOG_LEVEL_STANDARD, "Target OS is Windows 7 SP1 or later");
++                    return;
++                }
+             } else if (IsWindows7OrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7");
+-            } else if (IsWindowsVistaOrGreater()) {
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows Vista");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows 7 RTM");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Service Pack 1 is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureWin7MissingSP1)", &pLocString);
+             } else { 
+-                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Windows XP or earlier");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Detected Vista or earlier");
++                BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows 7 SP1 or later is required to continue installation");
++                LocGetString(_wixLoc, L"#(loc.FailureVistaOrEarlier)", &pLocString);
+             }
+-            BalLog(BOOTSTRAPPER_LOG_LEVEL_ERROR, "Windows 8.1 or later is required to continue installation");
+         }
+ 
+-        LocGetString(_wixLoc, L"#(loc.FailureOldOS)", &pLocString);
+         if (pLocString && pLocString->wzText) {
+             BalFormatString(pLocString->wzText, &_failedMessage);
+         }
+diff --git a/Tools/msi/bundle/packagegroups/crt.wxs b/Tools/msi/bundle/packagegroups/crt.wxs
+index f931da1..bcb81ea 100644
+--- a/Tools/msi/bundle/packagegroups/crt.wxs
++++ b/Tools/msi/bundle/packagegroups/crt.wxs
+@@ -4,7 +4,7 @@
+         <PackageGroup Id="crt">
+             <MsiPackage Id="ucrt_AllUsers"
+                         SourceFile="ucrt.msi"
+-                        Compressed="no"
++                        Compressed="yes"
+                         DownloadUrl="$(var.DownloadUrl)"
+                         ForcePerMachine="yes"
+                         InstallCondition="InstallAllUsers and not CRTInstalled and (Include_core or Include_exe or Include_pip) and not LauncherOnly">
+@@ -12,7 +12,7 @@
+             </MsiPackage>
+             <MsiPackage Id="ucrt_JustForMe"
+                         SourceFile="ucrt.msi"
+-                        Compressed="no"
++                        Compressed="yes"
+                         DownloadUrl="$(var.DownloadUrl)"
+                         ForcePerMachine="no"
+                         InstallCondition="not InstallAllUsers and not CRTInstalled and (Include_core or Include_exe or Include_pip) and not LauncherOnly">
