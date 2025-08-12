@@ -92,7 +92,7 @@ index 0000000..a2a0ba8
 +if __name__ == '__main__':
 +    main()
 diff --git a/PCbuild/get_externals.bat b/PCbuild/get_externals.bat
-index ee79add..768c149 100644
+index 4067f27..9f1c039 100644
 --- a/PCbuild/get_externals.bat
 +++ b/PCbuild/get_externals.bat
 @@ -93,6 +93,16 @@ for %%b in (%binaries%) do (
@@ -113,17 +113,17 @@ index ee79add..768c149 100644
  goto end
  
 diff --git a/PCbuild/python.props b/PCbuild/python.props
-index c451429..e6388e7 100644
+index 1b88a2f..379412e 100644
 --- a/PCbuild/python.props
 +++ b/PCbuild/python.props
-@@ -68,6 +68,7 @@
-     <opensslIncludeDir>$(opensslOutDir)include</opensslIncludeDir>
-     <nasmDir>$(ExternalsDir)\nasm-2.11.06\</nasmDir>
-     <zlibDir>$(ExternalsDir)\zlib-1.2.12\</zlibDir>
+@@ -73,6 +73,7 @@
+     <opensslIncludeDir Condition="$(opensslIncludeDir) == ''">$(opensslOutDir)include</opensslIncludeDir>
+     <nasmDir Condition="$(nasmDir) == ''">$(ExternalsDir)\nasm-2.11.06\</nasmDir>
+     <zlibDir Condition="$(zlibDir) == ''">$(ExternalsDir)\zlib-1.2.12\</zlibDir>
 +    <apimswincorepathDir>$(ExternalsDir)\api-ms-win-core-path\</apimswincorepathDir>
-     
-     <!-- Suffix for all binaries when building for debug -->
-     <PyDebugExt Condition="'$(PyDebugExt)' == '' and $(Configuration) == 'Debug'">_d</PyDebugExt>
+   </PropertyGroup>
+ 
+   <PropertyGroup>
 diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
 index c899a3b..987a310 100644
 --- a/PCbuild/pythoncore.vcxproj

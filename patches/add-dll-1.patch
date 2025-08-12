@@ -36,8 +36,96 @@ index 4cc7008..50281ce 100644
        <_PythonRuntimeExe Include="$(PythonHome)\python*.exe" Condition="$(IncludePythonExe) == 'true'" />
        <_PythonRuntimeExe>
          <Link>%(Filename)%(Extension)</Link>
+diff --git a/PCbuild/get_api-ms-win-core-path.py b/PCbuild/get_api-ms-win-core-path.py
+new file mode 100644
+index 0000000..a2a0ba8
+--- /dev/null
++++ b/PCbuild/get_api-ms-win-core-path.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python3
++
++import argparse
++import os
++import pathlib
++import zipfile
++from urllib.request import urlretrieve
++
++
++def fetch_zip(zip_dir, verbose):
++    url = "https://github.com/adang1345/api-ms-win-core-path/releases/latest/download/api-ms-win-core-path.zip"
++    reporthook = None
++    if verbose:
++        reporthook = print
++    zip_dir.mkdir(parents=True, exist_ok=True)
++    filename, headers = urlretrieve(
++        url,
++        zip_dir / 'api-ms-win-core-path.zip',
++        reporthook=reporthook,
++    )
++    return filename
++
++
++def extract_zip(externals_dir, zip_path):
++    with zipfile.ZipFile(os.fspath(zip_path)) as zf:
++        zf.extractall(pathlib.Path(os.fspath(externals_dir)) / "api-ms-win-core-path")
++
++
++def parse_args():
++    p = argparse.ArgumentParser()
++    p.add_argument('-v', '--verbose', action='store_true')
++    p.add_argument('-e', '--externals-dir', type=pathlib.Path,
++                   help='Directory in which to store dependencies',
++                   default=pathlib.Path(__file__).parent.parent / 'externals')
++    return p.parse_args()
++
++
++def main():
++    args = parse_args()
++    zip_path = fetch_zip(
++        args.externals_dir / 'zips',
++        verbose=args.verbose,
++    )
++    final_name = args.externals_dir / "api-ms-win-core-path"
++    extract_zip(args.externals_dir, zip_path)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/PCbuild/get_externals.bat b/PCbuild/get_externals.bat
+index a48b59c..967b457 100644
+--- a/PCbuild/get_externals.bat
++++ b/PCbuild/get_externals.bat
+@@ -93,6 +93,16 @@ for %%b in (%binaries%) do (
+     )
+ )
+ 
++if exist "%EXTERNALS_DIR%\api-ms-win-core-path" (
++    echo.api-ms-win-core-path already exists, skipping.
++) else if NOT DEFINED PYTHON (
++    echo.PYTHON is not defined
++    exit /b 1
++) else (
++    echo.Fetching api-ms-win-core-path...
++    %PYTHON% -E "%PCBUILD%\get_api-ms-win-core-path.py" -e "%EXTERNALS_DIR%"
++)
++
+ echo Finished.
+ goto end
+ 
+diff --git a/PCbuild/python.props b/PCbuild/python.props
+index 5f4926e..ae2f9af 100644
+--- a/PCbuild/python.props
++++ b/PCbuild/python.props
+@@ -67,6 +67,7 @@
+     <opensslIncludeDir>$(opensslOutDir)include</opensslIncludeDir>
+     <nasmDir>$(ExternalsDir)\nasm-2.11.06\</nasmDir>
+     <zlibDir>$(ExternalsDir)\zlib-1.2.11\</zlibDir>
++    <apimswincorepathDir>$(ExternalsDir)\api-ms-win-core-path\</apimswincorepathDir>
+     
+     <!-- Suffix for all binaries when building for debug -->
+     <PyDebugExt Condition="'$(PyDebugExt)' == '' and $(Configuration) == 'Debug'">_d</PyDebugExt>
 diff --git a/PCbuild/pythoncore.vcxproj b/PCbuild/pythoncore.vcxproj
-index 2625d02..e7d866b 100644
+index 2625d02..7aceaa9 100644
 --- a/PCbuild/pythoncore.vcxproj
 +++ b/PCbuild/pythoncore.vcxproj
 @@ -553,6 +553,15 @@
@@ -45,10 +133,10 @@ index 2625d02..e7d866b 100644
      <Copy SourceFiles="%(VCRuntimeDLL.FullPath)" DestinationFolder="$(OutDir)" />
    </Target>
 +  <Target Name="_CopyWin7Patch_x86" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'Win32'">
-+    <Copy SourceFiles="$(PATCHDIR)\x86\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++    <Copy SourceFiles="$(apimswincorepathDir)\x86\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
 +  </Target>
 +  <Target Name="_CopyWin7Patch_x64" AfterTargets="Build" DependsOnTargets="_CopyVCRuntime" Condition="$(Platform) == 'x64'">
-+    <Copy SourceFiles="$(PATCHDIR)\x64\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
++    <Copy SourceFiles="$(apimswincorepathDir)\x64\api-ms-win-core-path-l1-1-0.dll" DestinationFolder="$(OutDir)" />
 +  </Target>
 +  <Target Name="_CleanWin7Patch" AfterTargets="Clean">
 +    <Delete Files="$(OutDir)api-ms-win-core-path-l1-1-0.dll" />

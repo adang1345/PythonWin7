@@ -16,7 +16,7 @@ For each Python version, this repository includes the following.
 - Windows help file (e.g. python390.chm) (3.9 and 3.10 only)
 
 For the more technical among you, these installers were built from the source distributions published at https://www.python.org/downloads/source/, with the following modifications.
-- Include the file `api-ms-win-core-path-l1-1-0.dll` in the distribution. This file was obtained from https://github.com/nalexandru/api-ms-win-core-path-HACK and is necessary for Python to run on older Windows versions.
+- Include the file `api-ms-win-core-path-l1-1-0.dll` in the distribution. This file was obtained from https://github.com/adang1345/api-ms-win-core-path and is necessary for Python to run on older Windows versions.
 - Create full installers that include all components to allow for a fully offline installation. These include debug symbols, debug binaries, and the Universal CRT. For Python 3.13 or higher, these include the experimental free-threaded build as well.
 - Allow the installer to proceed on Windows 7 SP1 and Windows Server 2008 R2 SP1.
 - For Python 3.11 or higher, modify the Python source code to restore compatibility with Windows 7 SP1 and Windows Server 2008 R2 SP1.
