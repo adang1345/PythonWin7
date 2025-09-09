@@ -2,6 +2,8 @@
 
 Officially, Python 3.9 and above are not supported on Windows 7 SP1 and Windows Server 2008 R2 SP1. Here, you can obtain unofficial Windows installers that bring back support for these older Windows versions.
 
+These installers also work on newer versions of Windows and can be used whenever official support is dropped. For instance, Python 3.14 officially requires Windows 10 or later, but these installers allow continued use on Windows 8 and 8.1 in addition to Windows 7 SP1.
+
 *Note:* Windows update KB2533623 must be installed for Python to run. Ensure that your computer is up-to-date via Windows Update. Alternatively, you can manually install update KB3063858, which supersedes KB2533623. Update KB3063858 can be obtained at the following link for [32-bit Windows](https://www.microsoft.com/en-us/download/details.aspx?id=47409) or [64-bit Windows](https://www.microsoft.com/en-gb/download/details.aspx?id=47442).
 
 For each Python version, this repository includes the following.
@@ -18,7 +20,7 @@ For each Python version, this repository includes the following.
 For the more technical among you, these installers were built from the source distributions published at https://www.python.org/downloads/source/, with the following modifications.
 - Include the file `api-ms-win-core-path-l1-1-0.dll` in the distribution. This file was obtained from https://github.com/adang1345/api-ms-win-core-path and is necessary for Python to run on older Windows versions.
 - Create full installers that include all components to allow for a fully offline installation. These include debug symbols, debug binaries, and the Universal CRT. For Python 3.13 or higher, these include the free-threaded build as well.
-- Allow the installer to proceed on Windows 7 SP1 and Windows Server 2008 R2 SP1.
+- Edit the OS version check to allow the installer to proceed on Windows 7 SP1 and Windows Server 2008 R2 SP1.
 - For Python 3.11 or higher, modify the Python source code to restore compatibility with Windows 7 SP1 and Windows Server 2008 R2 SP1.
 - Fix a few bugs in the build scripts.
 

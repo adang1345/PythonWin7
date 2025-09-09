@@ -1,7 +1,7 @@
 diff --git a/PC/launcher2.c b/PC/launcher2.c
 --- a/PC/launcher2.c
 +++ b/PC/launcher2.c
-@@ -1476,6 +1476,152 @@ addEnvironmentInfo(EnvironmentInfo **root, EnvironmentInfo* parent, EnvironmentI
+@@ -1476,6 +1476,155 @@ addEnvironmentInfo(EnvironmentInfo **root, EnvironmentInfo* parent, EnvironmentI
  \******************************************************************************/
  
  
@@ -51,9 +51,12 @@ diff --git a/PC/launcher2.c b/PC/launcher2.c
 +    DWORD dwFlags, LPDWORD pdwType, PVOID pvData,
 +    LPDWORD pcbData)
 +{
++    LONG ret = RegGetValueW(hKey, pszSubKey, pszValue, dwFlags, pdwType, pvData, pcbData);
++    if (ret != ERROR_INVALID_PARAMETER)
++        return ret;
++
 +    DWORD dwType, cbData = (pvData && pcbData) ? *pcbData : 0;
 +    PVOID pvBuf = NULL;
-+    LONG ret;
 +
 +    if (pvData && !pcbData)
 +        return ERROR_INVALID_PARAMETER;
@@ -154,7 +157,7 @@ diff --git a/PC/launcher2.c b/PC/launcher2.c
  int
  _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, const wchar_t *value)
  {
-@@ -1483,7 +1629,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
+@@ -1483,7 +1632,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
      DWORD cbData = 0;
      DWORD flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
  
@@ -163,7 +166,7 @@ diff --git a/PC/launcher2.c b/PC/launcher2.c
          return 0;
      }
  
-@@ -1492,7 +1638,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
+@@ -1492,7 +1641,7 @@ _registryReadString(const wchar_t **dest, HKEY root, const wchar_t *subkey, cons
          return RC_NO_MEMORY;
      }
  
@@ -173,6 +176,7 @@ diff --git a/PC/launcher2.c b/PC/launcher2.c
      } else {
          free((void *)buffer);
 diff --git a/Tools/msi/bundle/packagegroups/postinstall.wxs b/Tools/msi/bundle/packagegroups/postinstall.wxs
+index 24c72e6..13c2790 100644
 --- a/Tools/msi/bundle/packagegroups/postinstall.wxs
 +++ b/Tools/msi/bundle/packagegroups/postinstall.wxs
 @@ -52,7 +52,9 @@
@@ -242,6 +246,7 @@ diff --git a/Tools/msi/bundle/packagegroups/postinstall.wxs b/Tools/msi/bundle/p
      </Fragment>
  </Wix>
 diff --git a/Tools/msi/launcher/launcher_files.wxs b/Tools/msi/launcher/launcher_files.wxs
+index d9a230e..927a6c7 100644
 --- a/Tools/msi/launcher/launcher_files.wxs
 +++ b/Tools/msi/launcher/launcher_files.wxs
 @@ -9,6 +9,9 @@
