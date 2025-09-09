@@ -1,15 +1,42 @@
 diff --git a/Lib/_pyrepl/main.py b/Lib/_pyrepl/main.py
 --- a/Lib/_pyrepl/main.py
 +++ b/Lib/_pyrepl/main.py
-@@ -16,7 +16,7 @@ try:
-         raise RuntimeError(err)
- except Exception as e:
+@@ -5,20 +5,23 @@ import sys
+ 
+ CAN_USE_PYREPL: bool
+ FAIL_REASON: str
+-try:
+-    if sys.platform == "win32" and sys.getwindowsversion().build < 10586:
+-        raise RuntimeError("Windows 10 TH2 or later required")
+-    if not os.isatty(sys.stdin.fileno()):
+-        raise OSError(errno.ENOTTY, "tty required", "stdin")
+-    from .simple_interact import check
+-    if err := check():
+-        raise RuntimeError(err)
+-except Exception as e:
++if sys.platform == "win32" and sys.getwindowsversion().build < 10586:
++    # Windows 10 TH2 or later required
      CAN_USE_PYREPL = False
 -    FAIL_REASON = f"warning: can't use pyrepl: {e}"
-+    FAIL_REASON = ""
- else:
-     CAN_USE_PYREPL = True
+-else:
+-    CAN_USE_PYREPL = True
      FAIL_REASON = ""
++else:
++    try:
++        if not os.isatty(sys.stdin.fileno()):
++            raise OSError(errno.ENOTTY, "tty required", "stdin")
++        from .simple_interact import check
++        if err := check():
++            raise RuntimeError(err)
++    except Exception as e:
++        CAN_USE_PYREPL = False
++        FAIL_REASON = f"warning: can't use pyrepl: {e}"
++    else:
++        CAN_USE_PYREPL = True
++        FAIL_REASON = ""
+ 
+ 
+ def interactive_console(mainmodule=None, quiet=False, pythonstartup=False):
 diff --git a/Modules/_winapi.c b/Modules/_winapi.c
 --- a/Modules/_winapi.c
 +++ b/Modules/_winapi.c

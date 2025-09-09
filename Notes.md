@@ -16,7 +16,7 @@
 
 - If you get an error during documentation build saying that `itircl.dll` was not registered correctly, go to `externals\windows-installer\htmlhelp` and run `regsvr32 itcc.dll`. Or you can install HTML Help Compiler system-wide, which would register this DLL anyway.
 - Install Sphinx 3.5.4 to a Python 3.6 venv and set `PYTHON` to the location of the Python executable.
-- Apply `add-dll-1.patch` for 3.10.0-3.10.4 or `add-dll-2.patch` for 3.10.5-3.10.8, `add-dll-5.patch` for 3.10.9, `add-dll-6.patch` for 3.10.10-3.10.13, or `add-dll-4.patch` for 3.10.14 or higher to ensure that `api-ms-win-core-path-l1-1-0.dll` is installed next to the Python executable.
+- Apply `add-dll-1.patch` for 3.10.0-3.10.4, `add-dll-2.patch` for 3.10.5-3.10.8, `add-dll-5.patch` for 3.10.9, `add-dll-6.patch` for 3.10.10-3.10.13, or `add-dll-4.patch` for 3.10.14 or higher to ensure that `api-ms-win-core-path-l1-1-0.dll` is installed next to the Python executable.
 - Apply `enable-win7-install-1.patch` for 3.10.0-3.10.2, `enable-win7-install-2.patch` for 3.10.3-3.10.7, or `enable-win7-install-3.patch` for 3.10.8 or higher to allow the installer to proceed on Windows 7 and to include debug symbols, debug binaries, and the Universal CRT in the installer.
 - Apply `fix-guid.patch` for 3.10.0-3.10.7 to work around https://github.com/python/cpython/issues/96729.
 - Apply `fix-htmlhelp.patch` for 3.10.0-3.10.2 to fix error in documentation build (https://github.com/python/cpython/issues/90621).
